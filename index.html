@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Digital Twin Earth</title>
+    <link rel="stylesheet" href="./styles.css?v=20260710-icon-controls" />
+  </head>
+  <body>
+    <main class="stage">
+      <canvas id="earth-canvas" aria-label="Animated 3D Earth with forecast weather overlay"></canvas>
+
+      <form class="city-search" id="city-search" role="search">
+        <label class="sr-only" for="city-input">Find a city</label>
+        <input
+          id="city-input"
+          name="city"
+          autocomplete="off"
+          placeholder="Find a city"
+          aria-controls="city-results"
+          aria-expanded="false"
+        />
+        <button id="city-search-button" type="submit">Locate</button>
+        <div id="city-results" class="city-results" role="listbox" hidden></div>
+        <span id="city-search-message" class="city-search-message" aria-live="polite"></span>
+      </form>
+
+      <aside class="location-panel" id="location-panel" aria-live="polite" hidden>
+          <button id="location-close" class="icon-button" type="button" title="Close location forecast" aria-label="Close location forecast">&times;</button>
+          <span class="eyebrow">Selected location</span>
+          <h2 id="location-name">New York</h2>
+          <p id="location-coordinates" class="location-coordinates">40.7&deg; N, 74.0&deg; W</p>
+          <div class="location-stats">
+            <div><span>2 m temperature</span><strong id="location-temperature">--</strong></div>
+            <div><span>10 m wind</span><strong id="location-wind">--</strong></div>
+            <div><span>6 h precipitation</span><strong id="location-precipitation">--</strong></div>
+          </div>
+          <p class="model-note">Illustrative forecast values for this MVP</p>
+      </aside>
+      <div class="location-leader" id="location-leader" aria-hidden="true" hidden></div>
+      <div class="map-attribution" id="map-attribution" hidden>Map imagery &copy; Google</div>
+
+      <fieldset class="layer-panel" aria-label="Forecast layers">
+          <legend>Forecast layers</legend>
+          <label class="earth-select" for="earth-style">Earth image
+            <select id="earth-style">
+              <option value="satellite">Satellite</option>
+              <option value="nasa" selected>NASA Blue Marble</option>
+            </select>
+          </label>
+          <label><input id="day-night-toggle" type="checkbox" checked /> Day / night</label>
+          <label class="earth-select" for="weather-source">Weather data
+            <select id="weather-source">
+              <option value="auto">Auto</option>
+              <option value="pipeline">Real pipeline</option>
+              <option value="graphcast-era5t">GraphCast Small — ERA5T (July 4, 2026 source data)</option>
+              <option value="synthetic">Synthetic demo</option>
+            </select>
+          </label>
+          <div id="layer-controls"></div>
+      </fieldset>
+
+      <aside id="active-layer-legend" class="active-layer-legend" aria-label="Active weather layer legends" hidden></aside>
+
+      <section class="hud" aria-label="Forecast controls">
+        <div class="forecast-readout">
+          <span class="eyebrow" id="forecast-source">Loading forecast source</span>
+          <strong id="forecast-label">T+00h</strong>
+          <span id="forecast-time">Jul 8, 2026 00:00 UTC</span>
+          <span id="texture-status">Loading Earth imagery...</span>
+        </div>
+
+        <div class="controls">
+          <div class="control-toggles" aria-label="Map controls">
+            <button id="earth-rotation-toggle" class="control-icon is-active" type="button" aria-pressed="true" aria-label="Earth rotation on" title="Earth rotation on">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/><path d="M4 12a8 8 0 0 1 13.66-5.66"/></svg>
+            </button>
+            <button id="play-toggle" class="control-icon is-active" type="button" aria-pressed="true" aria-label="Weather timeline playing" title="Weather timeline playing">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path class="icon-fill" d="M8 5.5v13l10-6.5z"/><path class="icon-stroke" d="M8 5.5v13l10-6.5z"/></svg>
+            </button>
+            <button id="weather-toggle" class="control-icon" type="button" aria-pressed="false" aria-label="Forecast layers off" title="Forecast layers off">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 4 8 4-8 4-8-4 8-4Z"/><path d="m4 12 8 4 8-4M4 16l8 4 8-4"/></svg>
+            </button>
+          </div>
+          <label class="slider-wrap" for="frame-slider">
+            <span id="timeline-start">0h</span>
+            <span class="timeline-track">
+              <input id="frame-slider" type="range" min="0" max="8" value="0" step="1" />
+              <span class="timeline-ticks" id="timeline-ticks" aria-hidden="true"></span>
+            </span>
+            <span id="timeline-end">48h</span>
+          </label>
+        </div>
+      </section>
+    </main>
+
+    <script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+    <script src="./config.js"></script>
+    <script src="./main.js?v=20260714-compact-city-marker"></script>
+  </body>
+</html>
