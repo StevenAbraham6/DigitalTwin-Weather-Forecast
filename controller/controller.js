@@ -12,6 +12,9 @@ const ptzPad = document.querySelector("#ptz-pad");
 const ptzKnob = document.querySelector("#ptz-knob");
 const zoomIn = document.querySelector("#zoom-in");
 const zoomOut = document.querySelector("#zoom-out");
+const zoomTrackFill = document.querySelector(".zoom-track i");
+const zoomHint = document.querySelector(".zoom-hint");
+const controlHint = document.querySelector(".control-hint");
 const cameraReset = document.querySelector("#camera-reset");
 const cityForm = document.querySelector("#city-search-controller");
 const cityInput = document.querySelector("#city-input-controller");
@@ -207,6 +210,8 @@ function updatePad(event) {
 
 ptzPad.addEventListener("pointerdown", (event) => {
   ptzPad.setPointerCapture(event.pointerId);
+  ptzPad.classList.add("is-active");
+  controlHint.textContent = "Navigating…";
   updatePad(event);
   startCameraTimer();
 });
@@ -221,6 +226,8 @@ function stopPad(event) {
   if (event?.pointerId !== undefined) ptzPad.releasePointerCapture?.(event.pointerId);
   cameraIntent.pan = 0;
   cameraIntent.tilt = 0;
+  ptzPad.classList.remove("is-active");
+  controlHint.textContent = "Hold & drag to pan · tilt";
   ptzKnob.style.transform = "translate(-50%, -50%)";
   stopCameraTimerIfIdle();
 }
@@ -228,10 +235,16 @@ function stopPad(event) {
 function bindZoomButton(button, value) {
   button.addEventListener("pointerdown", (event) => {
     button.setPointerCapture(event.pointerId);
+    button.classList.add("is-active");
+    zoomTrackFill.style.width = value > 0 ? "82%" : "18%";
+    zoomHint.textContent = value > 0 ? "In" : "Out";
     cameraIntent.zoom = value;
     startCameraTimer();
   });
   const stop = () => {
+    button.classList.remove("is-active");
+    zoomTrackFill.style.width = "50%";
+    zoomHint.textContent = "Hold";
     cameraIntent.zoom = 0;
     stopCameraTimerIfIdle();
   };
@@ -245,6 +258,12 @@ bindZoomButton(zoomOut, -1);
 
 function stopCamera() {
   cameraIntent = { pan: 0, tilt: 0, zoom: 0 };
+  ptzPad.classList.remove("is-active");
+  controlHint.textContent = "Hold & drag to pan · tilt";
+  zoomIn.classList.remove("is-active");
+  zoomOut.classList.remove("is-active");
+  zoomTrackFill.style.width = "50%";
+  zoomHint.textContent = "Hold";
   ptzKnob.style.transform = "translate(-50%, -50%)";
   window.clearInterval(cameraSendTimer);
   cameraSendTimer = null;
@@ -299,7 +318,11 @@ function renderCityResults(results) {
   });
 }
 
-cityClear.addEventListener("click", () => sendCommand({ type: protocol.COMMANDS.CITY_CLEAR }));
+cityClear.addEventListener("click", () => {
+  cityInput.value = "";
+  cityResults.hidden = true;
+  sendCommand({ type: protocol.COMMANDS.CITY_CLEAR });
+});
 weatherVisible.addEventListener("click", () => sendCommand({ type: protocol.COMMANDS.WEATHER_VISIBLE_SET, visible: !currentState?.weather.visible }));
 weatherSource.addEventListener("change", () => sendCommand({ type: protocol.COMMANDS.WEATHER_SOURCE_SET, source: weatherSource.value }));
 earthStyle.addEventListener("change", () => sendCommand({ type: protocol.COMMANDS.EARTH_STYLE_SET, style: earthStyle.value }));
@@ -322,6 +345,20 @@ function syncOptions(select, options, value) {
   select.value = value;
 }
 
+function makeLayerIcon(layerId) {
+  const icons = {
+    temperature: '<path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>',
+    rain: '<path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25"/><path d="M8 16v5M12 14v7M16 16v5"/>',
+    pressure: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>',
+    wind: '<path d="M9.59 4.59A2 2 0 1 1 11 8H3M12.59 19.41A2 2 0 1 0 14 16H3M6.59 11.59A2 2 0 1 1 8 15H3"/>',
+  };
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = icons[layerId] || icons.wind;
+  return svg;
+}
+
 function applyState(state) {
   if (!state || (currentState && state.revision <= currentState.revision)) return;
   currentState = state;
@@ -330,7 +367,9 @@ function applyState(state) {
 
   weatherVisible.querySelector(".button-label").textContent = state.weather.visible ? "Weather on" : "Weather off";
   weatherVisible.setAttribute("aria-pressed", String(state.weather.visible));
+  weatherSource.disabled = !state.weather.visible;
   dayNight.setAttribute("aria-pressed", String(state.earth.dayNight));
+  dayNight.querySelector(".button-label").textContent = "Day / night";
   dayNight.setAttribute("aria-label", `Day and night ${state.earth.dayNight ? "on" : "off"}`);
   earthRotation.setAttribute("aria-pressed", String(state.earth.rotating));
   earthRotation.setAttribute("aria-label", `Auto rotate ${state.earth.rotating ? "on" : "off"}`);
@@ -341,11 +380,13 @@ function applyState(state) {
   selectedCity.textContent = state.city
     ? `${state.city.name}${state.city.country ? ` · ${state.city.country}` : ""}`
     : "No location selected";
+  selectedCity.classList.toggle("has-selection", Boolean(state.city));
 
   weatherLayers.replaceChildren(...state.weather.layers.map((layer) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = layer.label;
+    button.append(makeLayerIcon(layer.id), layer.label);
+    button.disabled = !state.weather.visible;
     button.setAttribute("aria-pressed", String(layer.visible));
     button.addEventListener("click", () => sendCommand({
       type: protocol.COMMANDS.WEATHER_LAYER_SET,
@@ -358,6 +399,8 @@ function applyState(state) {
   const frames = state.timeline.frames;
   timelineSlider.max = String(Math.max(0, frames.length - 1));
   timelineSlider.value = String(state.timeline.activeFrame);
+  const progress = frames.length > 1 ? state.timeline.activeFrame / (frames.length - 1) : 0;
+  timelineSlider.style.setProperty("--timeline-progress", `${progress * 100}%`);
   const active = frames[state.timeline.activeFrame];
   if (active) {
     timelineCurrent.textContent = `T+${String(active.leadHours).padStart(2, "0")}h`;

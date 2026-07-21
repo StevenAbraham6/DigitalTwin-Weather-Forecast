@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Digital Twin Controller</title>
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./controller.css?v=20260721-disconnect" />
+    <link rel="stylesheet" href="./controller.css?v=20260721-portrait-tiles-small" />
   </head>
   <body>
     <main class="controller-shell">
@@ -45,16 +45,16 @@
         <p id="pairing-message">The iPad and globe must be on the same local network.</p>
       </section>
 
-      <section id="controller-ui" class="controller-grid" hidden>
-        <section class="panel camera-panel">
+      <section id="controller-ui" class="controller-layout" hidden>
+        <section class="camera-pane">
           <div class="panel-heading">
-            <div><span class="eyebrow">Camera</span><h2>Pan / tilt / zoom</h2></div>
+            <div><span class="eyebrow">Camera</span><h2>Pan · Tilt · Zoom</h2></div>
             <button id="camera-reset" class="text-button icon-label-button" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/><path d="M12 8v8M8 12h8"/></svg>
               <span class="button-label">Reset view</span>
             </button>
           </div>
-          <div class="camera-controls">
+          <div class="joystick-stage">
             <div id="ptz-pad" class="ptz-pad" role="application" aria-label="Pan and tilt control">
               <span class="axis-label axis-up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg><em>Tilt up</em></span>
               <span class="axis-label axis-left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg><em>Pan left</em></span>
@@ -63,79 +63,80 @@
               <div class="ptz-rings"></div>
               <div id="ptz-knob" class="ptz-knob"></div>
             </div>
-            <div class="zoom-control" aria-label="Zoom controls">
-              <button id="zoom-in" type="button" aria-label="Zoom in"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5M10.5 7.5v6M7.5 10.5h6"/></svg></button>
-              <span>Zoom</span>
-              <button id="zoom-out" type="button" aria-label="Zoom out"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5M7.5 10.5h6"/></svg></button>
+            <p class="control-hint">Hold &amp; drag to pan · tilt</p>
+          </div>
+          <div class="zoom-control" aria-label="Zoom controls">
+            <span class="zoom-label">Zoom</span>
+            <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+            <span class="zoom-track" aria-hidden="true"><i></i></span>
+            <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+            <span class="zoom-hint">Hold</span>
+          </div>
+        </section>
+
+        <aside class="controller-sidebar">
+          <section class="panel location-panel-controller">
+            <div class="panel-heading">
+              <div><span class="eyebrow">Location</span><h2>Find a City</h2></div>
             </div>
-          </div>
-          <p class="control-hint">Hold and steer. Release to stop.</p>
-        </section>
+            <form id="city-search-controller" class="city-form">
+              <span class="city-input-wrap">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></svg>
+                <input id="city-input-controller" autocomplete="off" placeholder="City or place…" />
+              </span>
+              <button class="search-button" type="submit" aria-label="Search city">Search</button>
+              <button id="city-clear" class="clear-button" type="button" aria-label="Clear selected city">×</button>
+            </form>
+            <div id="city-results-controller" class="city-results-controller" hidden></div>
+            <p id="selected-city" class="selected-city">No location selected</p>
+          </section>
 
-        <section class="panel location-panel-controller">
-          <div class="panel-heading">
-            <div><span class="eyebrow">Location</span><h2>Find a city</h2></div>
-            <button id="city-clear" class="text-button icon-label-button" type="button">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
-              <span class="button-label">Clear</span>
-            </button>
-          </div>
-          <form id="city-search-controller" class="city-form">
-            <input id="city-input-controller" autocomplete="off" placeholder="City or place" />
-            <button class="icon-label-button" type="submit">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></svg>
-              <span class="button-label">Search</span>
-            </button>
-          </form>
-          <div id="city-results-controller" class="city-results-controller" hidden></div>
-          <p id="selected-city" class="selected-city">No location selected</p>
-        </section>
+          <section class="panel layers-panel-controller panel-accent">
+            <div class="panel-heading">
+              <div><span class="eyebrow">Visualization</span><h2>Data &amp; Layers</h2></div>
+              <button id="weather-visible" class="state-button icon-label-button" type="button" aria-pressed="false">
+                <span class="status-dot"></span>
+                <span class="button-label">Weather off</span>
+              </button>
+            </div>
+            <div class="select-grid">
+              <label>Weather model<span class="select-wrap"><select id="weather-source-controller"></select></span></label>
+              <label>Earth image<span class="select-wrap"><select id="earth-style-controller"></select></span></label>
+            </div>
+            <div class="quick-toggles">
+              <button id="day-night-controller" class="icon-label-button" type="button" aria-pressed="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                <span class="button-label">Day mode</span>
+              </button>
+              <button id="earth-rotation-controller" class="icon-label-button" type="button" aria-pressed="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/><path d="M4 12a8 8 0 0 1 13.66-5.66"/></svg>
+                <span class="button-label">Auto rotate</span>
+              </button>
+            </div>
+            <div class="field-label">Weather layers</div>
+            <div id="weather-layers-controller" class="weather-layers-controller"></div>
+          </section>
 
-        <section class="panel layers-panel-controller">
-          <div class="panel-heading">
-            <div><span class="eyebrow">Visualization</span><h2>Data and layers</h2></div>
-            <button id="weather-visible" class="state-button icon-label-button" type="button" aria-pressed="false">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 4 8 4-8 4-8-4 8-4Z"/><path d="m4 12 8 4 8-4M4 16l8 4 8-4"/></svg>
-              <span class="button-label">Weather off</span>
-            </button>
-          </div>
-          <div class="select-grid">
-            <label>Weather source<select id="weather-source-controller"></select></label>
-            <label>Earth image<select id="earth-style-controller"></select></label>
-          </div>
-          <div class="quick-toggles">
-            <button id="day-night-controller" class="icon-label-button" type="button" aria-pressed="true">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
-              <span class="button-label">Day / night</span>
-            </button>
-            <button id="earth-rotation-controller" class="icon-label-button" type="button" aria-pressed="true">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/><path d="M4 12a8 8 0 0 1 13.66-5.66"/></svg>
-              <span class="button-label">Auto rotate</span>
-            </button>
-          </div>
-          <div id="weather-layers-controller" class="weather-layers-controller"></div>
-        </section>
-
-        <section class="panel timeline-panel-controller">
-          <div class="panel-heading">
-            <div><span class="eyebrow">Forecast snapshots</span><h2 id="timeline-current">T+00h</h2></div>
-            <button id="playback-controller" class="state-button icon-label-button is-playing" type="button" aria-pressed="true">
-              <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="icon-fill" d="M8 5.5v13l10-6.5z"/></svg>
-              <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="icon-fill" d="M7 5h4v14H7zM14 5h4v14h-4z"/></svg>
-              <span class="button-label">Pause</span>
-            </button>
-          </div>
-          <label class="timeline-control">
-            <span id="timeline-first">T+00h</span>
-            <input id="timeline-slider-controller" type="range" min="0" max="0" value="0" step="1" />
-            <span id="timeline-last">T+00h</span>
-          </label>
-          <div id="timeline-date" class="timeline-date">Waiting for forecast state…</div>
-        </section>
+          <section class="panel timeline-panel-controller">
+            <div class="panel-heading">
+              <div><span class="eyebrow">Forecast Snapshots</span><h2 id="timeline-current">T+00h</h2></div>
+              <button id="playback-controller" class="state-button icon-label-button is-playing" type="button" aria-pressed="true">
+                <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="icon-fill" d="M8 5.5v13l10-6.5z"/></svg>
+                <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="icon-fill" d="M7 5h4v14H7zM14 5h4v14h-4z"/></svg>
+                <span class="button-label">Pause</span>
+              </button>
+            </div>
+            <label class="timeline-control">
+              <input id="timeline-slider-controller" type="range" min="0" max="0" value="0" step="1" />
+            </label>
+            <div class="timeline-labels"><span id="timeline-first">T+00h</span><span>T+48h</span><span id="timeline-last">T+00h</span></div>
+            <div id="timeline-date" class="timeline-date">Waiting for forecast state…</div>
+          </section>
+        </aside>
       </section>
     </main>
 
     <script src="../shared/protocol.js"></script>
-    <script src="./controller.js?v=20260721-disconnect"></script>
+    <script src="./controller.js?v=20260721-figma-redesign"></script>
   </body>
 </html>
