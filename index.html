@@ -60,6 +60,16 @@
 
       <aside id="active-layer-legend" class="active-layer-legend" aria-label="Active weather layer legends" hidden></aside>
 
+      <aside id="controller-pairing-panel" class="controller-pairing-panel" aria-live="polite" hidden>
+        <button id="controller-pairing-close" class="icon-button" type="button" title="Close controller pairing" aria-label="Close controller pairing">&times;</button>
+        <span class="eyebrow">iPad controller</span>
+        <h2>Scan to connect</h2>
+        <img id="controller-pairing-qr" alt="QR code that opens the iPad controller" />
+        <p>Or open <strong id="controller-pairing-url">the controller URL</strong> and enter:</p>
+        <output id="controller-pairing-code" class="controller-pairing-code">------</output>
+        <span id="controller-connection-status" class="controller-connection-status">Starting controller service…</span>
+      </aside>
+
       <section class="hud" aria-label="Forecast controls">
         <div class="forecast-readout">
           <span class="eyebrow" id="forecast-source">Loading forecast source</span>
@@ -82,6 +92,9 @@
             <button id="reset-view" class="control-icon" type="button" aria-label="Reset camera view" title="Reset camera view">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/><path d="M12 8v8M8 12h8"/></svg>
             </button>
+            <button id="controller-pair-button" class="control-icon" type="button" aria-pressed="false" aria-label="Connect iPad controller" title="Connect iPad controller">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10 6h4M11 18h2"/></svg>
+            </button>
           </div>
           <label class="slider-wrap" for="frame-slider">
             <span id="timeline-start">0h</span>
@@ -97,6 +110,7 @@
 
     <script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
     <script src="./config.js"></script>
-    <script src="./main.js?v=20260714-camera-orbit-inverted-y"></script>
+    <script src="./shared/protocol.js"></script>
+    <script src="./main.js?v=20260721-pairing-auto-close"></script>
   </body>
 </html>

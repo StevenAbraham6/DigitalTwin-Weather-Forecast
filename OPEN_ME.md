@@ -4,14 +4,50 @@ This frontend renders the Earth and visualizes the numeric grids published by
 the separate **Digital Twin Google Pipeline**. It does not run or modify the
 forecast model.
 
-Start it from this folder with a static web server:
+Install the local controller server once:
 
 ```bash
 cd "/Users/stevenabraham/Documents/Digital Twin 2.0"
-python3 -m http.server 8080
+npm install
 ```
 
-Then open `http://localhost:8080`.
+Then start the display and controller host:
+
+```bash
+npm start
+```
+
+Open `http://localhost:8080` on the presentation computer. The Node server
+replaces the prior static Python server because it serves both browser apps and
+routes their live WebSocket messages.
+
+## iPad controller
+
+The project contains two browser applications:
+
+- `/` is the authoritative Three.js globe display.
+- `/controller/` is the touch-first iPad control surface.
+
+Both are served by the same local Node process. On the globe, select the iPad
+icon in the bottom control bar. Scan the displayed QR code with the iPad, or
+open the controller URL shown by the server and enter the six-digit pairing
+code. The presentation computer and iPad must be able to reach each other on
+the same local network.
+
+The iPad sends camera intent and semantic commands; the globe continues to
+perform all rendering, forecast loading, and camera integration locally. The
+globe publishes its confirmed source, layers, city, playback, and timeline
+state back to the controller. A 220 ms camera-input timeout stops PTZ motion if
+the iPad disconnects during a gesture.
+
+If port 8080 is already occupied, stop the old server or choose another port:
+
+```bash
+PORT=8090 npm start
+```
+
+The terminal prints the corresponding local-network controller URL after the
+server starts.
 
 ## Forecast pipeline connection
 

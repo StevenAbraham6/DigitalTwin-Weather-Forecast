@@ -265,6 +265,60 @@ body {
   backdrop-filter: blur(14px);
 }
 
+.controller-pairing-panel {
+  position: fixed;
+  top: 88px;
+  right: 24px;
+  z-index: 30;
+  width: min(320px, calc(100vw - 48px));
+  padding: 20px;
+  border: 1px solid rgba(139, 255, 214, 0.28);
+  border-radius: 18px;
+  background: rgba(4, 13, 17, 0.94);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(22px);
+}
+
+.controller-pairing-panel[hidden] { display: none; }
+
+.controller-pairing-panel h2 {
+  margin: 5px 0 14px;
+  color: #f7fbff;
+  font-size: 22px;
+}
+
+.controller-pairing-panel p {
+  margin: 12px 0 8px;
+  color: rgba(247, 251, 255, 0.7);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.controller-pairing-panel img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.controller-pairing-code {
+  display: block;
+  color: #8bffd6;
+  font: 700 30px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.16em;
+}
+
+.controller-connection-status {
+  display: block;
+  margin-top: 12px;
+  color: rgba(247, 251, 255, 0.58);
+  font-size: 11px;
+}
+
+.controller-connection-status.is-connected { color: #8bffd6; }
+
 .active-layer-legend h2,
 .active-layer-legend h3 {
   margin: 0;

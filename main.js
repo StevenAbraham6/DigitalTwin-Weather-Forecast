@@ -32,6 +32,14 @@ let layerInputs = [];
 const dayNightToggle = document.querySelector("#day-night-toggle");
 const earthStyleSelect = document.querySelector("#earth-style");
 const weatherSourceSelect = document.querySelector("#weather-source");
+const controllerPairButton = document.querySelector("#controller-pair-button");
+const controllerPairingPanel = document.querySelector("#controller-pairing-panel");
+const controllerPairingClose = document.querySelector("#controller-pairing-close");
+const controllerPairingQr = document.querySelector("#controller-pairing-qr");
+const controllerPairingUrl = document.querySelector("#controller-pairing-url");
+const controllerPairingCode = document.querySelector("#controller-pairing-code");
+const controllerConnectionStatus = document.querySelector("#controller-connection-status");
+const controllerProtocol = window.DigitalTwinProtocol;
 const mapTilesConfig = window.DIGITAL_TWIN_CONFIG?.mapTiles ?? {};
 
 const forecastStart = new Date("2026-07-08T00:00:00Z");
@@ -305,18 +313,23 @@ let suggestedCities = [];
 let citySuggestionQuery = "";
 let citySuggestionTimer = null;
 let citySuggestionRequest = 0;
+let controllerSocket = null;
+let controllerReconnectTimer = null;
+let controllerConnected = false;
+let controllerStateRevision = 0;
+let lastRemoteCameraSequence = -1;
+let remoteCameraIntent = { pan: 0, tilt: 0, zoom: 0 };
+let remoteCameraInputAt = 0;
 
 weatherSourceSelect.value = requestedWeatherSource;
 setWeatherSource(requestedWeatherSource);
 
 playToggle.addEventListener("click", () => {
-  isPlaying = !isPlaying;
-  setControlState(playToggle, isPlaying, isPlaying ? "Weather timeline playing" : "Weather timeline paused");
+  setPlaying(!isPlaying);
 });
 
 earthRotationToggle.addEventListener("click", () => {
-  earthRotationEnabled = !earthRotationEnabled;
-  setControlState(earthRotationToggle, earthRotationEnabled, earthRotationEnabled ? "Earth rotation on" : "Earth rotation off");
+  setEarthRotation(!earthRotationEnabled);
 });
 
 resetViewButton.addEventListener("click", resetCameraView);
@@ -326,24 +339,19 @@ slider.addEventListener("input", () => {
 });
 
 weatherToggle.addEventListener("click", () => {
-  weatherVisible = !weatherVisible;
-  setLayerVisibility();
-  setControlState(weatherToggle, weatherVisible, weatherVisible ? "Forecast layers on" : "Forecast layers off");
+  setWeatherVisibility(!weatherVisible);
 });
 
 weatherSourceSelect.addEventListener("change", () => {
-  requestedWeatherSource = weatherSourceSelect.value;
-  localStorage.setItem("digital-twin-earth.weather-source", requestedWeatherSource);
-  setWeatherSource(requestedWeatherSource);
+  selectWeatherSource(weatherSourceSelect.value);
 });
 
 dayNightToggle.addEventListener("change", () => {
-  dayNightEnabled = dayNightToggle.checked;
-  updateLighting();
+  setDayNight(dayNightToggle.checked);
 });
 
 earthStyleSelect.addEventListener("change", () => {
-  applyEarthStyle(earthStyleSelect.value);
+  setEarthStyle(earthStyleSelect.value);
 });
 
 citySearch.addEventListener("submit", async (event) => {
@@ -395,6 +403,18 @@ document.addEventListener("pointerdown", (event) => {
 
 locationClose.addEventListener("click", closeCity);
 
+controllerPairButton.addEventListener("click", () => {
+  controllerPairingPanel.hidden = !controllerPairingPanel.hidden;
+  controllerPairButton.setAttribute("aria-pressed", String(!controllerPairingPanel.hidden));
+});
+
+function closeControllerPairingPanel() {
+  controllerPairingPanel.hidden = true;
+  controllerPairButton.setAttribute("aria-pressed", "false");
+}
+
+controllerPairingClose.addEventListener("click", closeControllerPairingPanel);
+
 canvas.addEventListener("pointerdown", (event) => {
   pointerDown = true;
   previousPointerX = event.clientX;
@@ -426,6 +446,244 @@ window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   updateLocationPanelPosition();
 });
+
+connectControllerService();
+
+function setPlaying(value) {
+  isPlaying = Boolean(value);
+  setControlState(playToggle, isPlaying, isPlaying ? "Weather timeline playing" : "Weather timeline paused");
+  publishControlState();
+}
+
+function setEarthRotation(value) {
+  earthRotationEnabled = Boolean(value);
+  setControlState(earthRotationToggle, earthRotationEnabled, earthRotationEnabled ? "Earth rotation on" : "Earth rotation off");
+  publishControlState();
+}
+
+function setWeatherVisibility(value) {
+  weatherVisible = Boolean(value);
+  setLayerVisibility();
+  setControlState(weatherToggle, weatherVisible, weatherVisible ? "Forecast layers on" : "Forecast layers off");
+  publishControlState();
+}
+
+function selectWeatherSource(source) {
+  if (![...weatherSourceSelect.options].some((option) => option.value === source)) return;
+  requestedWeatherSource = source;
+  weatherSourceSelect.value = source;
+  localStorage.setItem("digital-twin-earth.weather-source", requestedWeatherSource);
+  setWeatherSource(requestedWeatherSource);
+  publishControlState({ sourceStatus: "loading" });
+}
+
+function setDayNight(value) {
+  dayNightEnabled = Boolean(value);
+  dayNightToggle.checked = dayNightEnabled;
+  updateLighting();
+  publishControlState();
+}
+
+function setEarthStyle(style) {
+  if (![...earthStyleSelect.options].some((option) => option.value === style)) return;
+  earthStyleSelect.value = style;
+  applyEarthStyle(style);
+  publishControlState();
+}
+
+function setWeatherLayer(layerId, visible) {
+  const input = layerInputs.find((candidate) => candidate.dataset.layer === layerId);
+  if (!input) return;
+  input.checked = Boolean(visible);
+  setLayerVisibility();
+  publishControlState();
+}
+
+function controllerState(extra = {}) {
+  return {
+    revision: ++controllerStateRevision,
+    connected: controllerConnected,
+    playback: { playing: isPlaying },
+    earth: {
+      rotating: earthRotationEnabled,
+      dayNight: dayNightEnabled,
+      style: earthStyleSelect.value,
+    },
+    camera: {
+      distance: targetCameraPosition.length(),
+      fov: targetCameraFov,
+    },
+    weather: {
+      visible: weatherVisible,
+      requestedSource: requestedWeatherSource,
+      activeSource: activeWeatherSource,
+      layers: layerInputs.map((input) => ({
+        id: input.dataset.layer,
+        label: input.parentElement?.textContent.trim() || input.dataset.layer,
+        visible: input.checked,
+      })),
+    },
+    timeline: {
+      activeFrame,
+      frames: forecastFrames.map((frame) => ({
+        index: frame.index,
+        leadHours: frame.leadHours,
+        validTime: frame.validTime.toISOString(),
+      })),
+    },
+    city: selectedCity ? {
+      name: selectedCity.name,
+      country: selectedCity.country,
+      lat: selectedCity.lat,
+      lon: selectedCity.lon,
+    } : null,
+    capabilities: {
+      weatherSources: [...weatherSourceSelect.options].map((option) => ({ id: option.value, label: option.textContent })),
+      earthStyles: [...earthStyleSelect.options].map((option) => ({ id: option.value, label: option.textContent })),
+    },
+    ...extra,
+  };
+}
+
+function sendControllerMessage(message) {
+  if (controllerSocket?.readyState === WebSocket.OPEN) controllerSocket.send(JSON.stringify(message));
+}
+
+function publishControlState(extra) {
+  sendControllerMessage({ type: "state", state: controllerState(extra) });
+}
+
+function setControllerStatus(message, connected = false) {
+  controllerConnected = connected;
+  controllerConnectionStatus.textContent = message;
+  controllerConnectionStatus.classList.toggle("is-connected", connected);
+  setControlState(
+    controllerPairButton,
+    connected,
+    connected ? "iPad controller connected" : "Connect iPad controller",
+  );
+}
+
+function connectControllerService() {
+  window.clearTimeout(controllerReconnectTimer);
+  if (!controllerProtocol) {
+    setControllerStatus("Controller protocol could not load.");
+    return;
+  }
+  const socketProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  controllerSocket = new WebSocket(`${socketProtocol}//${window.location.host}/ws`);
+
+  controllerSocket.addEventListener("open", () => {
+    sendControllerMessage({
+      type: "hello",
+      role: controllerProtocol.ROLES.DISPLAY,
+      protocolVersion: controllerProtocol.VERSION,
+    });
+    setControllerStatus("Ready to create a controller session.");
+  });
+
+  controllerSocket.addEventListener("message", (event) => {
+    let message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (message.type === "session.created") {
+      controllerPairingQr.src = message.qrCodeDataUrl;
+      controllerPairingCode.textContent = message.pairCode;
+      controllerPairingUrl.textContent = new URL(message.controllerUrl).origin + "/controller/";
+      setControllerStatus("Ready for an iPad to connect.");
+    } else if (message.type === "controller.status") {
+      setControllerStatus(message.connected ? "iPad connected" : "Waiting for an iPad…", message.connected);
+      if (message.connected) {
+        closeControllerPairingPanel();
+        publishControlState();
+      }
+    } else if (message.type === "state.request") {
+      publishControlState();
+    } else if (message.type === "command") {
+      executeRemoteCommand(message.command, message.id);
+    }
+  });
+
+  controllerSocket.addEventListener("close", () => {
+    setControllerStatus("Controller service unavailable. Start this project with npm start.");
+    controllerReconnectTimer = window.setTimeout(connectControllerService, 2000);
+  });
+
+  controllerSocket.addEventListener("error", () => {
+    controllerSocket.close();
+  });
+}
+
+function executeRemoteCommand(command, id) {
+  const commands = controllerProtocol.COMMANDS;
+  let accepted = true;
+  switch (command?.type) {
+    case commands.CAMERA_INPUT: {
+      if (command.sequence <= lastRemoteCameraSequence) return;
+      lastRemoteCameraSequence = command.sequence;
+      remoteCameraIntent = {
+        pan: controllerProtocol.clampUnit(command.pan),
+        tilt: controllerProtocol.clampUnit(command.tilt),
+        zoom: controllerProtocol.clampUnit(command.zoom),
+      };
+      remoteCameraInputAt = performance.now();
+      if (remoteCameraIntent.pan || remoteCameraIntent.tilt || remoteCameraIntent.zoom) targetRotation = null;
+      break;
+    }
+    case commands.CAMERA_RESET:
+      resetCameraView();
+      break;
+    case commands.CITY_SELECT: {
+      const lat = Number(command.city?.lat);
+      const lon = Number(command.city?.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+        accepted = false;
+        break;
+      }
+      const city = {
+        name: String(command.city.name || "Selected location").slice(0, 120),
+        country: String(command.city.country || "").slice(0, 120),
+        lat,
+        lon,
+      };
+      cityInput.value = city.name;
+      focusCity(city);
+      break;
+    }
+    case commands.CITY_CLEAR:
+      if (selectedCity) closeCity();
+      break;
+    case commands.TIMELINE_FRAME_SET: {
+      const frame = Math.round(Number(command.frame));
+      if (!Number.isFinite(frame) || frame < 0 || frame >= forecastFrames.length || slider.disabled) accepted = false;
+      else updateFrame(frame);
+      break;
+    }
+    case commands.PLAYBACK_SET:
+      setPlaying(command.playing);
+      break;
+    case commands.EARTH_ROTATION_SET:
+      setEarthRotation(command.rotating);
+      break;
+    case commands.WEATHER_VISIBLE_SET:
+      setWeatherVisibility(command.visible);
+      break;
+    case commands.WEATHER_SOURCE_SET:
+      selectWeatherSource(command.source);
+      break;
+    case commands.WEATHER_LAYER_SET:
+      setWeatherLayer(command.layer, command.visible);
+      break;
+    case commands.EARTH_DAY_NIGHT_SET:
+      setDayNight(command.enabled);
+      break;
+    case commands.EARTH_STYLE_SET:
+      setEarthStyle(command.style);
+      break;
+    default:
+      accepted = false;
+  }
+  sendControllerMessage({ type: "command.result", id, accepted });
+}
 
 async function setWeatherSource(mode) {
   const request = mode;
@@ -669,7 +927,10 @@ function buildLayerControls(layers, source) {
     input.type = "checkbox";
     input.dataset.layer = layer.id;
     input.checked = index < 2;
-    input.addEventListener("change", setLayerVisibility);
+    input.addEventListener("change", () => {
+      setLayerVisibility();
+      publishControlState();
+    });
     labelElement.append(input, ` ${layer.label}`);
     layerControls.append(labelElement);
     return input;
@@ -742,6 +1003,16 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const delta = clock.getDelta();
   frameTimer += delta;
+  const remoteCameraActive = performance.now() - remoteCameraInputAt < 220
+    && Boolean(remoteCameraIntent.pan || remoteCameraIntent.tilt || remoteCameraIntent.zoom);
+
+  if (remoteCameraActive) {
+    // A joystick describes where the camera should move, while a pointer drag
+    // describes how the globe should follow the hand. Their directions are
+    // intentionally opposite so right/up on the iPad now pans right/tilts up.
+    orbitCamera(-remoteCameraIntent.pan * 220 * delta, -remoteCameraIntent.tilt * 220 * delta);
+    zoomCamera(remoteCameraIntent.zoom, delta);
+  }
 
   if (isPlaying) {
     if (frameTransition) {
@@ -766,11 +1037,12 @@ renderer.setAnimationLoop(() => {
     ) {
       targetRotation = null;
     }
-  } else if (!pointerDown && !selectedCity && earthRotationEnabled) {
+  } else if (!pointerDown && !remoteCameraActive && !selectedCity && earthRotationEnabled) {
     root.rotation.y += delta * 0.07;
   }
-  camera.position.lerp(targetCameraPosition, 1 - Math.exp(-4.2 * delta));
-  camera.fov += (targetCameraFov - camera.fov) * (1 - Math.exp(-4.2 * delta));
+  const cameraDamping = pointerDown || remoteCameraActive ? 15 : 4.2;
+  camera.position.lerp(targetCameraPosition, 1 - Math.exp(-cameraDamping * delta));
+  camera.fov += (targetCameraFov - camera.fov) * (1 - Math.exp(-cameraDamping * delta));
   camera.updateProjectionMatrix();
   camera.lookAt(0, 0, 0);
   advectWindStreamlines(delta);
@@ -815,6 +1087,7 @@ function updateForecastReadout(index) {
   }
   updateLighting();
   if (selectedCity) updateLocationForecast(selectedCity, frame);
+  publishControlState();
 }
 
 function applyFrameTextures(index, syntheticFrame = getSyntheticFrame(index)) {
@@ -1240,6 +1513,7 @@ function focusCity(city, { zoomToLocation = true, loadTiles = true } = {}) {
   updateLocationForecast(city, forecastFrames[activeFrame]);
   if (loadTiles) loadRegionalImagery(city);
   requestAnimationFrame(() => requestAnimationFrame(updateLocationPanelPosition));
+  publishControlState();
 }
 
 async function selectGlobeLocation(event) {
@@ -1312,6 +1586,7 @@ function closeCity() {
   citySearchMessage.textContent = "";
   isPlaying = true;
   setControlState(playToggle, true, "Weather timeline playing");
+  publishControlState();
 }
 
 function orbitCamera(deltaX, deltaY) {
@@ -1321,11 +1596,19 @@ function orbitCamera(deltaX, deltaY) {
   targetCameraPosition.setFromSpherical(spherical);
 }
 
+function zoomCamera(direction, delta) {
+  if (!direction) return;
+  const spherical = new THREE.Spherical().setFromVector3(targetCameraPosition);
+  spherical.radius = clamp(spherical.radius * Math.exp(-direction * 1.15 * delta), 1.78, 9.5);
+  targetCameraPosition.setFromSpherical(spherical);
+}
+
 function resetCameraView() {
   if (selectedCity) closeCity();
   targetCameraPosition.copy(baseCameraPosition);
   targetCameraFov = baseCameraFov;
   targetRotation = { ...baseRotation };
+  publishControlState();
 }
 
 function updateLocationPanelPosition() {
