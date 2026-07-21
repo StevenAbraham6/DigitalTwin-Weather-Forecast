@@ -6,6 +6,7 @@ const forecastSourceLabel = document.querySelector("#forecast-source");
 const playToggle = document.querySelector("#play-toggle");
 const earthRotationToggle = document.querySelector("#earth-rotation-toggle");
 const weatherToggle = document.querySelector("#weather-toggle");
+const resetViewButton = document.querySelector("#reset-view");
 const slider = document.querySelector("#frame-slider");
 const timelineStart = document.querySelector("#timeline-start");
 const timelineEnd = document.querySelector("#timeline-end");
@@ -98,6 +99,8 @@ renderer.toneMappingExposure = 1.05;
 const textureLoader = new THREE.TextureLoader();
 textureLoader.setCrossOrigin("anonymous");
 const localTextureLoader = new THREE.TextureLoader();
+const globeRaycaster = new THREE.Raycaster();
+const globePointer = new THREE.Vector2();
 
 const root = new THREE.Group();
 root.rotation.y = -0.55;
@@ -213,10 +216,12 @@ let syntheticFrameRequestId = 0;
 let frameTransitionRequest = 0;
 let forecastWorker = createForecastWorker();
 const initialSyntheticFrame = getSyntheticFrame(0);
-const temperatureMaterial = new THREE.MeshLambertMaterial({
+const temperatureMaterial = new THREE.MeshBasicMaterial({
   map: initialSyntheticFrame.temperature,
   transparent: true,
-  opacity: 0.22,
+  // Temperature is the primary surface layer, so keep it vivid enough to
+  // read over satellite imagery and independent of the day/night lighting.
+  opacity: 0.82,
   depthWrite: false,
 });
 const temperatureLayer = makeEarthLayer(1.568, temperatureMaterial);
@@ -270,8 +275,12 @@ const pipelineLayers = new Map();
 const pipelineSurfaceCache = new Map();
 let pipelineManifest = null;
 let activeWeatherSource = "synthetic";
-let requestedWeatherSource = localStorage.getItem("digital-twin-earth.weather-source") || "auto";
-if (!["auto", "pipeline", "graphcast-era5t", "synthetic"].includes(requestedWeatherSource)) requestedWeatherSource = "auto";
+let requestedWeatherSource = localStorage.getItem("digital-twin-earth.weather-source") || "graphcast";
+// Migrate prior Auto, Real pipeline, and fixed-ERA5T selections to the single
+// latest GraphCast option rather than preserving a stale source choice.
+if (["auto", "pipeline", "graphcast-era5t"].includes(requestedWeatherSource)) requestedWeatherSource = "graphcast";
+if (!["graphcast", "synthetic"].includes(requestedWeatherSource)) requestedWeatherSource = "graphcast";
+localStorage.setItem("digital-twin-earth.weather-source", requestedWeatherSource);
 
 const stars = makeStars();
 scene.add(stars);
@@ -282,8 +291,13 @@ let activeFrame = 0;
 let frameTimer = 0;
 let pointerDown = false;
 let previousPointerX = 0;
+let previousPointerY = 0;
+let pointerStartX = 0;
+let pointerStartY = 0;
 let weatherVisible = false;
 let selectedCity = null;
+let locationLookupRequest = 0;
+let selectedLocationUsesCityView = false;
 let targetRotation = null;
 let dayNightEnabled = true;
 let frameTransition = null;
@@ -304,6 +318,8 @@ earthRotationToggle.addEventListener("click", () => {
   earthRotationEnabled = !earthRotationEnabled;
   setControlState(earthRotationToggle, earthRotationEnabled, earthRotationEnabled ? "Earth rotation on" : "Earth rotation off");
 });
+
+resetViewButton.addEventListener("click", resetCameraView);
 
 slider.addEventListener("input", () => {
   updateFrame(Number(slider.value));
@@ -382,19 +398,26 @@ locationClose.addEventListener("click", closeCity);
 canvas.addEventListener("pointerdown", (event) => {
   pointerDown = true;
   previousPointerX = event.clientX;
+  previousPointerY = event.clientY;
+  pointerStartX = event.clientX;
+  pointerStartY = event.clientY;
   canvas.setPointerCapture(event.pointerId);
 });
 
 canvas.addEventListener("pointermove", (event) => {
   if (!pointerDown) return;
-  const delta = event.clientX - previousPointerX;
+  const deltaX = event.clientX - previousPointerX;
+  const deltaY = event.clientY - previousPointerY;
   previousPointerX = event.clientX;
-  root.rotation.y += delta * 0.006;
-  targetRotation = null;
+  previousPointerY = event.clientY;
+  orbitCamera(deltaX, deltaY);
 });
 
-canvas.addEventListener("pointerup", () => {
+canvas.addEventListener("pointerup", (event) => {
   pointerDown = false;
+  canvas.releasePointerCapture?.(event.pointerId);
+  const moved = Math.hypot(event.clientX - pointerStartX, event.clientY - pointerStartY);
+  if (moved < 7) selectGlobeLocation(event);
 });
 
 window.addEventListener("resize", () => {
@@ -409,29 +432,26 @@ async function setWeatherSource(mode) {
   textureStatus.textContent = mode === "synthetic" ? "Synthetic demo" : "Loading forecast pipeline...";
   try {
     if (mode === "synthetic") throw new Error("Synthetic demo selected");
-    const pipeline = mode === "graphcast-era5t"
-      ? await loadEra5tGraphCastForecast()
-      : await loadPipelineForecast();
+    // GraphCast resolves through the main catalog's `latest` pointer, so a
+    // saved selection can never pin the UI to an older fixed source run.
+    const pipeline = await loadPipelineForecast();
     if (request !== requestedWeatherSource) return;
-    activatePipeline(pipeline, mode === "graphcast-era5t" ? {
-      mode: "graphcast-era5t",
-      label: "GraphCast Small — ERA5T",
-      status: "ERA5T source data from July 4, 2026.",
-      cityNote: "GraphCast Small forecast using ERA5T source data from July 4, 2026",
+    activatePipeline(pipeline, mode === "graphcast" ? {
+      mode: "pipeline",
+      label: "GraphCast Small — latest pipeline data",
+      status: `Latest bundled GraphCast Small run, initialized ${new Date(pipeline.manifest.initializationTime).toUTCString().replace(":00 GMT", " UTC")}.`,
+      cityNote: "Latest bundled GraphCast Small forecast data",
     } : undefined);
   } catch (error) {
     if (request !== requestedWeatherSource) return;
     console.warn("Forecast pipeline could not load", error);
-    if (mode === "auto") {
-      activateSynthetic();
-      textureStatus.textContent = "Pipeline unavailable; using synthetic demo.";
-    } else if (mode === "synthetic") {
+    if (mode === "synthetic") {
       activateSynthetic();
     } else {
-      activateUnavailablePipeline(mode === "graphcast-era5t" ? {
-        label: "GraphCast Small — ERA5T unavailable",
-        message: "GraphCast Small — ERA5T assets could not be loaded.",
-        status: "GraphCast Small — ERA5T source data could not be loaded.",
+      activateUnavailablePipeline(mode === "graphcast" ? {
+        label: "GraphCast Small — latest pipeline unavailable",
+        message: "The latest GraphCast Small assets could not be loaded.",
+        status: "Latest GraphCast Small forecast data could not be loaded.",
       } : undefined);
     }
   }
@@ -447,26 +467,6 @@ async function loadPipelineForecast() {
   }
   const surface = await loadPipelineSurfaceFrame(0, manifest, manifestUrl);
   return { manifest, model, manifestUrl, surface };
-}
-
-async function loadEra5tGraphCastForecast() {
-  const catalogUrl = new URL("./forecasts/era5t-graphcast-small/catalog.json", window.location.href);
-  const { catalog } = await loadForecastCatalog(catalogUrl);
-  const model = catalog.models?.find((candidate) => candidate.id === "google-graphcast-small");
-  if (!model?.latestManifestPath) throw new Error("ERA5T GraphCast catalog has no model manifest");
-  const { manifest, manifestUrl } = await loadForecastManifest(model, catalogUrl);
-  const leadTimes = manifest.leadTimesHours;
-  if (!manifest.uiSurface?.pathTemplate || !Array.isArray(leadTimes) || !leadTimes.length
-    || leadTimes.some((leadHours) => !Number.isFinite(leadHours))) {
-    throw new Error("ERA5T GraphCast manifest has no valid forecast lead times");
-  }
-  const cache = new Map();
-  const surfaces = await Promise.all(leadTimes.map((leadHours, index) => (
-    loadPipelineSurfaceFrame(index, manifest, manifestUrl, cache).catch((error) => {
-      throw new Error(`ERA5T GraphCast frame t+${leadHours}.json could not load: ${error.message}`);
-    })
-  )));
-  return { manifest, model, manifestUrl, surface: surfaces[0], surfaces };
 }
 
 async function loadForecastCatalog(catalogUrl = new URL("./forecasts/catalog.json", window.location.href)) {
@@ -556,7 +556,7 @@ function makePipelineScalarTexture(surface, fieldName) {
     const value = values[index];
     if (value === null || !Number.isFinite(value)) continue;
     let color = [190, 226, 255]; let alpha = 0;
-    if (fieldName === "temperature") { color = temperatureColor(value); alpha = 68; }
+    if (fieldName === "temperature") { color = temperatureColor(value); alpha = 224; }
     else if (fieldName === "rain") {
       // Values remain the pipeline's six-hour accumulations. Only the hue is
       // classified into human-readable meteorological intensity bands.
@@ -702,7 +702,7 @@ function buildPipelineLayers(surface) {
   ["temperature", "rain", "pressure", "moisture"].filter((field) => surface.fields[field]).forEach((field, index) => {
     const material = new THREE.MeshBasicMaterial({
       map: makePipelineScalarTexture(surface, field), transparent: true,
-      opacity: field === "rain" ? 0.72 : field === "pressure" ? 0.58 : 0.42, depthWrite: false,
+      opacity: field === "temperature" ? 0.82 : field === "rain" ? 0.72 : field === "pressure" ? 0.58 : 0.42, depthWrite: false,
     });
     const mesh = makeEarthLayer(1.568 + index * 0.012, material);
     // The Google mosaic is transparent, so distance-based transparent sorting
@@ -931,7 +931,8 @@ function setLayerVisibility() {
 const layerLegendDefinitions = {
   temperature: {
     title: "Temperature (°C)",
-    entries: [["#406fff", "Below 0°"], ["#5fd3ff", "0–10°"], ["#7ef4c2", "10–20°"], ["#ffe672", "20–30°"], ["#ff6f54", "30°+"]],
+    gradient: "linear-gradient(90deg, #5b1a98 0%, #315cff 18%, #12c7ff 35%, #3ee59b 50%, #f6eb5b 64%, #ff9b2f 77%, #f13b2b 89%, #a90b4e 100%)",
+    labels: [["−30°", "0%"], ["−10°", "25%"], ["0°", "42%"], ["10°", "55%"], ["20°", "68%"], ["30°", "82%"], ["40°+", "100%"]],
   },
   rain: {
     title: "6 h precipitation (mm)",
@@ -962,6 +963,20 @@ function updateActiveLayerLegend() {
     const definition = layerLegendDefinitions[input.dataset.layer];
     const title = document.createElement("h3");
     title.textContent = definition.title;
+    activeLayerLegend.append(title);
+    if (definition.gradient) {
+      const scale = document.createElement("div");
+      scale.className = "legend-gradient-scale";
+      scale.style.setProperty("--legend-gradient", definition.gradient);
+      definition.labels.forEach(([label, position]) => {
+        const tick = document.createElement("span");
+        tick.textContent = label;
+        tick.style.setProperty("--legend-position", position);
+        scale.append(tick);
+      });
+      activeLayerLegend.append(scale);
+      return;
+    }
     const list = document.createElement("ul");
     definition.entries.forEach(([color, label]) => {
       const item = document.createElement("li");
@@ -971,7 +986,7 @@ function updateActiveLayerLegend() {
       item.append(swatch, label);
       list.append(item);
     });
-    activeLayerLegend.append(title, list);
+    activeLayerLegend.append(list);
   });
 }
 
@@ -1191,21 +1206,28 @@ function tileYToLatitude(tileY, zoom) {
   return THREE.MathUtils.radToDeg(Math.atan(Math.sinh(mercatorY)));
 }
 
-function focusCity(city) {
+function focusCity(city, { zoomToLocation = true, loadTiles = true } = {}) {
   selectedCity = city;
-  stars.visible = false;
+  selectedLocationUsesCityView = zoomToLocation;
+  stars.visible = !zoomToLocation;
   citySuggestionRequest++;
   citySuggestionQuery = "";
   suggestedCities = [];
   hideCityResults();
-  // City selection changes the camera only. The selected pipeline timeline
-  // should keep playing unless the user explicitly pauses it.
-  targetCameraPosition.copy(cityCameraPosition);
-  targetCameraFov = cityCameraFov;
-  targetRotation = {
-    x: THREE.MathUtils.degToRad(city.lat),
-    y: -Math.PI / 2 - THREE.MathUtils.degToRad(city.lon),
-  };
+  // A search result uses the detailed city view; a direct globe click keeps
+  // the global view exactly as the user left it.
+  if (zoomToLocation) {
+    targetCameraPosition.copy(cityCameraPosition);
+    targetCameraFov = cityCameraFov;
+    targetRotation = {
+      x: THREE.MathUtils.degToRad(city.lat),
+      y: -Math.PI / 2 - THREE.MathUtils.degToRad(city.lon),
+    };
+  } else {
+    regionalImageryRequest++;
+    clearRegionalImagery();
+    targetRotation = null;
+  }
   locationMarker.position.copy(lonLatToVector3(city.lon, city.lat, 1.64));
   locationMarker.quaternion.setFromUnitVectors(
     new THREE.Vector3(0, 1, 0),
@@ -1216,16 +1238,70 @@ function focusCity(city) {
   locationCoordinates.textContent = `${formatLatitude(city.lat)}, ${formatLongitude(city.lon)} · ${city.country}`;
   locationPanel.hidden = false;
   updateLocationForecast(city, forecastFrames[activeFrame]);
-  loadRegionalImagery(city);
+  if (loadTiles) loadRegionalImagery(city);
   requestAnimationFrame(() => requestAnimationFrame(updateLocationPanelPosition));
+}
+
+async function selectGlobeLocation(event) {
+  const bounds = canvas.getBoundingClientRect();
+  globePointer.set(
+    ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+    -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+  );
+  globeRaycaster.setFromCamera(globePointer, camera);
+  const hit = globeRaycaster.intersectObject(earth, false)[0];
+  if (!hit) return;
+
+  // Hit points are in world space; convert through the rotating globe before
+  // translating the spherical coordinate back to latitude/longitude.
+  const point = root.worldToLocal(hit.point.clone()).normalize();
+  const lat = THREE.MathUtils.radToDeg(Math.asin(point.y));
+  const lon = wrapLon(THREE.MathUtils.radToDeg(Math.atan2(-point.z, point.x)));
+  const requestId = ++locationLookupRequest;
+  const city = {
+    name: "Locating place…",
+    country: "Looking up location name",
+    lat,
+    lon,
+    ...makeSyntheticBaseline(lat, lon),
+  };
+
+  focusCity(city, { zoomToLocation: false, loadTiles: false });
+  const namedLocation = await reverseGeocodeLocation(lat, lon);
+  if (requestId !== locationLookupRequest || selectedCity !== city) return;
+
+  city.name = namedLocation.name;
+  city.country = namedLocation.country;
+  locationName.textContent = city.name;
+  locationCoordinates.textContent = `${formatLatitude(city.lat)}, ${formatLongitude(city.lon)} · ${city.country}`;
+}
+
+async function reverseGeocodeLocation(lat, lon) {
+  const fallback = { name: "Selected location", country: "Location name unavailable" };
+  try {
+    const url = new URL("https://nominatim.openstreetmap.org/reverse");
+    url.search = new URLSearchParams({ format: "jsonv2", lat: lat.toFixed(5), lon: lon.toFixed(5), zoom: "10", addressdetails: "1" });
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!response.ok) return fallback;
+    const { address = {} } = await response.json();
+    const name = address.city ?? address.town ?? address.village ?? address.municipality
+      ?? address.county ?? address.state ?? fallback.name;
+    return { name, country: address.country ?? fallback.country };
+  } catch {
+    return fallback;
+  }
 }
 
 function closeCity() {
   selectedCity = null;
-  regionalImageryRequest++;
-  targetRotation = { ...baseRotation };
-  targetCameraPosition.copy(baseCameraPosition);
-  targetCameraFov = baseCameraFov;
+  locationLookupRequest++;
+  if (selectedLocationUsesCityView) {
+    regionalImageryRequest++;
+    targetRotation = { ...baseRotation };
+    targetCameraPosition.copy(baseCameraPosition);
+    targetCameraFov = baseCameraFov;
+  }
+  selectedLocationUsesCityView = false;
   clearRegionalImagery();
   locationMarker.visible = false;
   locationPanel.hidden = true;
@@ -1236,6 +1312,20 @@ function closeCity() {
   citySearchMessage.textContent = "";
   isPlaying = true;
   setControlState(playToggle, true, "Weather timeline playing");
+}
+
+function orbitCamera(deltaX, deltaY) {
+  const spherical = new THREE.Spherical().setFromVector3(targetCameraPosition);
+  spherical.theta -= deltaX * 0.006;
+  spherical.phi = clamp(spherical.phi - deltaY * 0.006, 0.18, Math.PI - 0.18);
+  targetCameraPosition.setFromSpherical(spherical);
+}
+
+function resetCameraView() {
+  if (selectedCity) closeCity();
+  targetCameraPosition.copy(baseCameraPosition);
+  targetCameraFov = baseCameraFov;
+  targetRotation = { ...baseRotation };
 }
 
 function updateLocationPanelPosition() {
@@ -2073,7 +2163,7 @@ function makeScalarPixels(frameIndex, layer) {
 
       if (layer === "temperature") {
         color = temperatureColor(output.temperature);
-        alpha = 68;
+        alpha = 224;
       } else if (layer === "rain") {
         const intensity = clamp(output.rain / 20, 0, 1);
         color = rainColor(intensity);
@@ -2313,9 +2403,10 @@ function convectiveCell(lon, lat, phase) {
 
 function temperatureColor(value) {
   const stops = [
-    [64, 111, 255], [95, 211, 255], [126, 244, 194], [255, 230, 114], [255, 111, 84],
+    [91, 26, 152], [49, 92, 255], [18, 199, 255], [62, 229, 155],
+    [246, 235, 91], [255, 155, 47], [241, 59, 43], [169, 11, 78],
   ];
-  return interpolateStops(stops, clamp((value + 12) / 48, 0, 1));
+  return interpolateStops(stops, clamp((value + 30) / 72, 0, 1));
 }
 
 function rainColor(value) {
