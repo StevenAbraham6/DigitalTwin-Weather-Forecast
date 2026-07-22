@@ -79,10 +79,14 @@ const cities = [
   { name: "Auckland", country: "New Zealand", lat: -36.851, lon: 174.764, timeZone: "Pacific/Auckland", temp: 16, wind: 16, rain: 3 },
 ];
 
-const textureBase = "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets";
 const localNasaTextures = {
   earth: "./nasa-blue-marble-hd.jpg",
   lights: "./nasa-black-marble-2016.jpg",
+};
+const localPlanetTextures = {
+  normal: "./assets/planets/earth_normal_2048.jpg",
+  specular: "./assets/planets/earth_specular_2048.jpg",
+  lights: "./assets/planets/earth_lights_2048.png",
 };
 
 const scene = new THREE.Scene();
@@ -163,11 +167,11 @@ loadLocalTexture(localNasaTextures.earth, (texture) => {
   earthMaterial.map = texture;
   earthMaterial.needsUpdate = true;
 });
-loadRemoteTexture(`${textureBase}/earth_bump_2048.jpg`, (texture) => {
-  earthMaterial.bumpMap = texture;
+loadLocalTexture(localPlanetTextures.normal, (texture) => {
+  earthMaterial.normalMap = texture;
   earthMaterial.needsUpdate = true;
 });
-loadRemoteTexture(`${textureBase}/earth_specular_2048.jpg`, (texture) => {
+loadLocalTexture(localPlanetTextures.specular, (texture) => {
   earthMaterial.specularMap = texture;
   earthMaterial.needsUpdate = true;
 });
@@ -177,7 +181,7 @@ function loadNasaCityLights() {
     cityLightMaterial.uniforms.cityLights.value = texture;
     cityLightMaterial.needsUpdate = true;
   }, () => {
-    loadRemoteTexture(`${textureBase}/earth_lights_2048.png`, (texture) => {
+    loadLocalTexture(localPlanetTextures.lights, (texture) => {
       cityLightMaterial.uniforms.cityLights.value = texture;
       cityLightMaterial.needsUpdate = true;
     });
@@ -2108,10 +2112,6 @@ function formatLatitude(value) {
 
 function formatLongitude(value) {
   return `${Math.abs(value).toFixed(1)}° ${value >= 0 ? "E" : "W"}`;
-}
-
-function loadRemoteTexture(url, onLoad, onError) {
-  loadTexture(textureLoader, url, onLoad, onError);
 }
 
 function loadLocalTexture(url, onLoad, onError) {
