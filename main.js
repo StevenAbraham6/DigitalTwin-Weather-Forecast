@@ -248,7 +248,11 @@ root.add(pressureLayer);
 
 const transitionLayers = makeTransitionLayers();
 
-const windStreamlines = makeWindStreamlines(900);
+// Windy-style flow fields read as a continuous layer because they keep a short
+// history for thousands of moving particles. Scale the count to the display,
+// while keeping a ceiling that remains comfortable for integrated GPUs.
+const windParticleCount = clamp(Math.round((window.innerWidth * window.innerHeight) / 300), 3200, 4800);
+const windStreamlines = makeWindStreamlines(windParticleCount, 6);
 root.add(windStreamlines.lines);
 
 const forecastLayers = {
@@ -895,6 +899,7 @@ function activatePipeline({ manifest, model, manifestUrl, surface, surfaces }, s
   pipelineSurfaceCache.clear();
   if (surfaces) surfaces.forEach((frame, index) => pipelineSurfaceCache.set(pipelineSurfaceCacheKey(manifest, index), frame));
   else pipelineSurfaceCache.set(pipelineSurfaceCacheKey(manifest, 0), surface);
+  resetWindTrailsForCurrentSource(0);
   forecastFrames = manifest.leadTimesHours.map((leadHours, index) => ({
     index,
     leadHours,
@@ -911,6 +916,7 @@ function activatePipeline({ manifest, model, manifestUrl, surface, surfaces }, s
 function activateSynthetic() {
   activeWeatherSource = "synthetic";
   pipelineManifest = null;
+  resetWindTrailsForCurrentSource(0);
   forecastFrames = Array.from({ length: 9 }, (_, index) => ({
     index, leadHours: index * 6, validTime: new Date(forecastStart.getTime() + index * 6 * 3_600_000),
   }));
@@ -1040,6 +1046,7 @@ function applyPipelineFrame(index) {
         previous?.dispose();
       }
     });
+    refreshWindTrailsForFrame(index);
     if (selectedCity) updateLocationForecast(selectedCity, forecastFrames[index]);
   }).catch(() => {
     textureStatus.textContent = activeWeatherSource === "graphcast-era5t"
@@ -1095,7 +1102,7 @@ renderer.setAnimationLoop(() => {
   camera.fov += (targetCameraFov - camera.fov) * (1 - Math.exp(-cameraDamping * delta));
   camera.updateProjectionMatrix();
   camera.lookAt(0, 0, 0);
-  advectWindStreamlines(delta);
+  if (isPlaying) advectWindStreamlines(delta);
   updateLighting();
   updateLocationPanelPosition();
   renderer.render(scene, camera);
@@ -1153,6 +1160,7 @@ function applyFrameTextures(index, syntheticFrame = getSyntheticFrame(index)) {
     material.needsUpdate = true;
     transitionLayers[layer].material.opacity = 0;
   });
+  refreshWindTrailsForFrame(index);
   prewarmForecastFrame((index + 1) % forecastFrames.length);
 }
 
@@ -1271,7 +1279,7 @@ const layerLegendDefinitions = {
     entries: [["#457eff", "970 low"], ["#85d7e7", "995"], ["#faf1b7", "1020"], ["#ff9165", "1045 high"]],
   },
   wind: {
-    title: "10 m wind (km/h / mph)", entries: [["#8bffd6", "Streamline direction"], ["#dff", "Faster motion = stronger wind"]],
+    title: "10 m wind (km/h / mph)", entries: [["#bcecff", "Particle trails follow wind"], ["#fff8da", "Longer, faster trails = stronger wind"]],
   },
   moisture: { title: "Moisture", entries: [["#bee2ff", "Higher moisture"]] },
 };
@@ -2697,74 +2705,271 @@ function sampleForecast(
   return { temperature, rain, moisture, pressure, windU, windV };
 }
 
-function makeWindStreamlines(count) {
+function makeWindStreamlines(count, trailSegmentCount = 6) {
   const seeds = [];
-  const positions = new Float32Array(count * 2 * 3);
-  const colors = new Float32Array(count * 2 * 3);
+  const pointsPerTrail = trailSegmentCount + 1;
+  const positions = new Float32Array(count * trailSegmentCount * 2 * 3);
+  const colors = new Float32Array(count * trailSegmentCount * 2 * 3);
+  const trailLons = new Float32Array(count * pointsPerTrail);
+  const trailLats = new Float32Array(count * pointsPerTrail);
   for (let index = 0; index < count; index++) {
-    const lon = wrapLon(index * 137.508);
-    const lat = -68 + ((index * 47.23) % 136);
-    seeds.push({ lon, lat, radius: 1.62 + (index % 5) * 0.004 });
-    writeStreamline(index, seeds[index], positions, colors, 0);
+    const seed = {
+      lon: 0,
+      lat: 0,
+      radius: 1.563 + (index % 5) * 0.0005,
+      age: 0,
+      maxAge: 9 + ((index * 17) % 13) * 0.7,
+      generation: 0,
+    };
+    resetWindParticle(seed, index, count, trailLons, trailLats, pointsPerTrail);
+    seed.age = ((index * 0.071) % seed.maxAge);
+    traceWindTrail(index, seed, 0, trailLons, trailLats, pointsPerTrail, sampleForecast);
+    const wind = sampleForecast(seed.lon, seed.lat, 0);
+    seeds.push(seed);
+    writeWindTrail(index, seed, wind, positions, colors, trailLons, trailLats, trailSegmentCount, pointsPerTrail);
   }
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  const positionAttribute = new THREE.BufferAttribute(positions, 3);
+  const colorAttribute = new THREE.BufferAttribute(colors, 3);
+  positionAttribute.setUsage(THREE.DynamicDrawUsage);
+  colorAttribute.setUsage(THREE.DynamicDrawUsage);
+  geometry.setAttribute("position", positionAttribute);
+  geometry.setAttribute("color", colorAttribute);
   const lines = new THREE.LineSegments(
     geometry,
     new THREE.LineBasicMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.84,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     }),
   );
-  return { lines, seeds, positions, colors };
+  lines.renderOrder = 30;
+  return {
+    lines,
+    seeds,
+    positions,
+    colors,
+    trailLons,
+    trailLats,
+    trailSegmentCount,
+    pointsPerTrail,
+    trailSampleElapsed: 0,
+    advectionElapsed: 0,
+  };
 }
 
 function advectWindStreamlines(delta) {
   if (!windStreamlines.lines.visible) return;
-  windStreamlines.seeds.forEach((seed, index) => {
-    const wind = isNumericPipelineSource()
-      ? samplePipelineForecast(seed.lon, seed.lat, activeFrame)
-      : sampleForecast(seed.lon, seed.lat, activeFrame);
-    if (wind.windU === null || wind.windV === null) return;
-    seed.lon = wrapLon(seed.lon + wind.windU * delta * 0.12);
-    seed.lat = clamp(seed.lat + wind.windV * delta * 0.1, -78, 78);
-    writeStreamline(index, seed, windStreamlines.positions, windStreamlines.colors, activeFrame, wind);
-  });
+  windStreamlines.advectionElapsed += Math.min(delta, 0.05);
+  if (windStreamlines.advectionElapsed < 1 / 30) return;
+  const elapsed = Math.min(windStreamlines.advectionElapsed, 0.05);
+  windStreamlines.advectionElapsed = 0;
+  windStreamlines.trailSampleElapsed += elapsed;
+  const retraceTrails = windStreamlines.trailSampleElapsed >= 0.12;
+  if (retraceTrails) windStreamlines.trailSampleElapsed %= 0.12;
+
+  for (let index = 0; index < windStreamlines.seeds.length; index++) {
+    const seed = windStreamlines.seeds[index];
+    seed.age += elapsed;
+    if (seed.age >= seed.maxAge) {
+      seed.generation += 1;
+      resetWindParticle(
+        seed,
+        index,
+        windStreamlines.seeds.length,
+        windStreamlines.trailLons,
+        windStreamlines.trailLats,
+        windStreamlines.pointsPerTrail,
+      );
+    }
+    const wind = sampleActiveWind(seed.lon, seed.lat, activeFrame);
+    if (wind.windU === null || wind.windV === null) continue;
+
+    // u/v are eastward/northward components. Correct longitude movement for
+    // latitude so a trail's direction remains faithful on the sphere. The
+    // display curve deliberately separates the common 2-11 m/s range so calm
+    // and strong winds remain visibly distinct at globe scale.
+    const speed = Math.hypot(wind.windU, wind.windV);
+    const direction = Math.max(0.001, speed);
+    const visualSpeed = windParticleDegreesPerSecond(speed);
+    const longitudeScale = Math.max(0.28, Math.cos(degToRad(seed.lat)));
+    seed.lon = wrapLon(seed.lon + (wind.windU / direction / longitudeScale) * elapsed * visualSpeed);
+    seed.lat = clamp(seed.lat + (wind.windV / direction) * elapsed * visualSpeed, -79, 79);
+    if (retraceTrails || seed.age === 0) {
+      traceWindTrail(
+        index,
+        seed,
+        activeFrame,
+        windStreamlines.trailLons,
+        windStreamlines.trailLats,
+        windStreamlines.pointsPerTrail,
+        sampleActiveWind,
+      );
+    } else {
+      const trailOffset = index * windStreamlines.pointsPerTrail;
+      windStreamlines.trailLons[trailOffset] = seed.lon;
+      windStreamlines.trailLats[trailOffset] = seed.lat;
+    }
+    writeWindTrail(
+      index,
+      seed,
+      wind,
+      windStreamlines.positions,
+      windStreamlines.colors,
+      windStreamlines.trailLons,
+      windStreamlines.trailLats,
+      windStreamlines.trailSegmentCount,
+      windStreamlines.pointsPerTrail,
+    );
+  }
   windStreamlines.lines.geometry.attributes.position.needsUpdate = true;
   windStreamlines.lines.geometry.attributes.color.needsUpdate = true;
 }
 
-function writeStreamline(index, seed, positions, colors, frameIndex, wind = sampleForecast(seed.lon, seed.lat, frameIndex)) {
+function resetWindParticle(seed, index, count, trailLons, trailLats, pointsPerTrail) {
+  const sequence = index + seed.generation * count;
+  const latitudeNoise = Math.sin((sequence + 1) * 12.9898) * 43758.5453;
+  const longitudeNoise = Math.sin((sequence + 1) * 78.233) * 43758.5453;
+  const latitudeUnit = latitudeNoise - Math.floor(latitudeNoise);
+  const longitudeUnit = longitudeNoise - Math.floor(longitudeNoise);
+  const latitudeLimit = Math.sin(degToRad(78));
+  seed.lon = longitudeUnit * 360 - 180;
+  seed.lat = THREE.MathUtils.radToDeg(Math.asin((latitudeUnit * 2 - 1) * latitudeLimit));
+  seed.age = 0;
+  seed.maxAge = 9 + ((sequence * 17) % 13) * 0.7;
+  const trailOffset = index * pointsPerTrail;
+  for (let point = 0; point < pointsPerTrail; point++) {
+    trailLons[trailOffset + point] = seed.lon;
+    trailLats[trailOffset + point] = seed.lat;
+  }
+}
+
+function resetWindTrailsForCurrentSource(frameIndex) {
+  windStreamlines.trailSampleElapsed = 0;
+  for (let index = 0; index < windStreamlines.seeds.length; index++) {
+    const seed = windStreamlines.seeds[index];
+    seed.generation += 1;
+    resetWindParticle(
+      seed,
+      index,
+      windStreamlines.seeds.length,
+      windStreamlines.trailLons,
+      windStreamlines.trailLats,
+      windStreamlines.pointsPerTrail,
+    );
+    seed.age = ((index * 0.071) % seed.maxAge);
+  }
+  refreshWindTrailsForFrame(frameIndex);
+}
+
+function refreshWindTrailsForFrame(frameIndex) {
+  for (let index = 0; index < windStreamlines.seeds.length; index++) {
+    const seed = windStreamlines.seeds[index];
+    traceWindTrail(
+      index,
+      seed,
+      frameIndex,
+      windStreamlines.trailLons,
+      windStreamlines.trailLats,
+      windStreamlines.pointsPerTrail,
+      sampleActiveWind,
+    );
+    const wind = sampleActiveWind(seed.lon, seed.lat, frameIndex);
+    writeWindTrail(
+      index,
+      seed,
+      wind,
+      windStreamlines.positions,
+      windStreamlines.colors,
+      windStreamlines.trailLons,
+      windStreamlines.trailLats,
+      windStreamlines.trailSegmentCount,
+      windStreamlines.pointsPerTrail,
+    );
+  }
+  windStreamlines.lines.geometry.attributes.position.needsUpdate = true;
+  windStreamlines.lines.geometry.attributes.color.needsUpdate = true;
+}
+
+function sampleActiveWind(lon, lat, frameIndex) {
+  return isNumericPipelineSource()
+    ? samplePipelineForecast(lon, lat, frameIndex)
+    : sampleForecast(lon, lat, frameIndex);
+}
+
+function windParticleDegreesPerSecond(speed) {
+  return clamp(0.025 * speed ** 1.8, 0.06, 4.2);
+}
+
+function traceWindTrail(index, seed, frameIndex, trailLons, trailLats, pointsPerTrail, sampleWind) {
+  const trailOffset = index * pointsPerTrail;
+  let lon = seed.lon;
+  let lat = seed.lat;
+  trailLons[trailOffset] = lon;
+  trailLats[trailOffset] = lat;
+  for (let point = 1; point < pointsPerTrail; point++) {
+    const wind = sampleWind(lon, lat, frameIndex);
+    if (wind.windU === null || wind.windV === null) {
+      trailLons[trailOffset + point] = lon;
+      trailLats[trailOffset + point] = lat;
+      continue;
+    }
+    const speed = Math.hypot(wind.windU, wind.windV);
+    const direction = Math.max(1, speed);
+    const pointSpacing = clamp(0.14 + windParticleDegreesPerSecond(speed) * 0.17, 0.16, 0.9);
+    const longitudeScale = Math.max(0.28, Math.cos(degToRad(lat)));
+    lon = wrapLon(lon - (wind.windU / direction / longitudeScale) * pointSpacing);
+    lat = clamp(lat - (wind.windV / direction) * pointSpacing, -79, 79);
+    trailLons[trailOffset + point] = lon;
+    trailLats[trailOffset + point] = lat;
+  }
+}
+
+function writeWindTrail(
+  index,
+  seed,
+  wind,
+  positions,
+  colors,
+  trailLons,
+  trailLats,
+  trailSegmentCount,
+  pointsPerTrail,
+) {
   if (wind.windU === null || wind.windV === null) return;
   const speed = Math.hypot(wind.windU, wind.windV);
-  const tailLength = clamp(0.11 + speed * 0.009, 0.12, 0.42);
-  const direction = Math.max(1, speed);
-  const tailLon = wrapLon(seed.lon - (wind.windU / direction) * tailLength * 16);
-  const tailLat = clamp(seed.lat - (wind.windV / direction) * tailLength * 10, -80, 80);
-  const tail = lonLatToVector3(tailLon, tailLat, seed.radius);
-  const head = lonLatToVector3(seed.lon, seed.lat, seed.radius);
-  const offset = index * 6;
-  tail.toArray(positions, offset);
-  head.toArray(positions, offset + 3);
-
   const color = windColor(speed);
-  colors[offset] = color[0] * 0.18;
-  colors[offset + 1] = color[1] * 0.18;
-  colors[offset + 2] = color[2] * 0.18;
-  colors[offset + 3] = color[0];
-  colors[offset + 4] = color[1];
-  colors[offset + 5] = color[2];
+  const speedVisibility = 0.38 + 0.62 * clamp(speed / 16, 0, 1);
+  const trailOffset = index * pointsPerTrail;
+  const vertexOffset = index * trailSegmentCount * 6;
+
+  for (let segment = 0; segment < trailSegmentCount; segment++) {
+    const newerPoint = trailOffset + segment;
+    const olderPoint = newerPoint + 1;
+    const older = lonLatToVector3(trailLons[olderPoint], trailLats[olderPoint], seed.radius);
+    const newer = lonLatToVector3(trailLons[newerPoint], trailLats[newerPoint], seed.radius);
+    const offset = vertexOffset + segment * 6;
+    older.toArray(positions, offset);
+    newer.toArray(positions, offset + 3);
+
+    const olderStrength = speedVisibility * (0.08 + 0.72 * (1 - (segment + 1) / trailSegmentCount) ** 1.4);
+    const newerStrength = speedVisibility * (0.08 + 0.72 * (1 - segment / trailSegmentCount) ** 1.4);
+    colors[offset] = color[0] * olderStrength;
+    colors[offset + 1] = color[1] * olderStrength;
+    colors[offset + 2] = color[2] * olderStrength;
+    colors[offset + 3] = color[0] * newerStrength;
+    colors[offset + 4] = color[1] * newerStrength;
+    colors[offset + 5] = color[2] * newerStrength;
+  }
 }
 
 function windColor(speed) {
   return interpolateStops(
-    [[92, 191, 255], [107, 255, 207], [255, 224, 87], [255, 89, 66]],
-    clamp(speed / 52, 0, 1),
+    [[142, 205, 255], [188, 235, 255], [229, 252, 255], [255, 248, 218]],
+    clamp(speed / 42, 0, 1),
   ).map((channel) => channel / 255);
 }
 
