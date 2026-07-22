@@ -79,9 +79,14 @@ async function run() {
   const controllerByCode = await pairController(display, { pairCode: session.pairCode });
   await displayReconnected;
 
-  controllerByCode.close();
+  const controllerEnded = waitFor(controllerByCode, (message) => message.type === "session.ended");
+  const displayDisconnectedByRequest = waitFor(display, (message) => message.type === "controller.status" && !message.connected);
+  display.send(JSON.stringify({ type: "controller.disconnect" }));
+  assert.match((await controllerEnded).message, /disconnected this iPad controller/i);
+  await displayDisconnectedByRequest;
+
   display.close();
-  console.log("Controller pairing, command routing, state sync, QR token, and manual code passed.");
+  console.log("Controller pairing, command routing, state sync, QR token, manual code, and display-side disconnect passed.");
 }
 
 run().catch((error) => {

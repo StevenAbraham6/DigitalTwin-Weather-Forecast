@@ -1,5 +1,7 @@
 const canvas = document.querySelector("#earth-canvas");
+const stage = document.querySelector(".stage");
 const label = document.querySelector("#forecast-label");
+const sampleDateLabel = document.querySelector("#forecast-sample-date");
 const timeLabel = document.querySelector("#forecast-time");
 const textureStatus = document.querySelector("#texture-status");
 const forecastSourceLabel = document.querySelector("#forecast-source");
@@ -22,19 +24,23 @@ const mapAttribution = document.querySelector("#map-attribution");
 const locationClose = document.querySelector("#location-close");
 const locationName = document.querySelector("#location-name");
 const locationCoordinates = document.querySelector("#location-coordinates");
+const locationLocalTime = document.querySelector("#location-local-time");
 const locationTemperature = document.querySelector("#location-temperature");
 const locationWind = document.querySelector("#location-wind");
 const locationPrecipitation = document.querySelector("#location-precipitation");
-const locationModelNote = document.querySelector(".model-note");
 const layerControls = document.querySelector("#layer-controls");
 const activeLayerLegend = document.querySelector("#active-layer-legend");
 let layerInputs = [];
 const dayNightToggle = document.querySelector("#day-night-toggle");
-const earthStyleSelect = document.querySelector("#earth-style");
 const weatherSourceSelect = document.querySelector("#weather-source");
 const controllerPairButton = document.querySelector("#controller-pair-button");
 const controllerPairingPanel = document.querySelector("#controller-pairing-panel");
 const controllerPairingClose = document.querySelector("#controller-pairing-close");
+const controllerPanelEyebrow = document.querySelector("#controller-panel-eyebrow");
+const controllerPanelTitle = document.querySelector("#controller-panel-title");
+const controllerPairingDetails = document.querySelector("#controller-pairing-details");
+const controllerConnectedDetails = document.querySelector("#controller-connected-details");
+const controllerDisconnectButton = document.querySelector("#controller-disconnect-button");
 const controllerPairingQr = document.querySelector("#controller-pairing-qr");
 const controllerPairingUrl = document.querySelector("#controller-pairing-url");
 const controllerPairingCode = document.querySelector("#controller-pairing-code");
@@ -51,25 +57,25 @@ let forecastFrames = Array.from({ length: 9 }, (_, index) => ({
 
 // A compact built-in gazetteer keeps the MVP usable without a geocoding service.
 const cities = [
-  { name: "New York", country: "United States", lat: 40.713, lon: -74.006, temp: 20, wind: 17, rain: 2 },
-  { name: "London", country: "United Kingdom", lat: 51.507, lon: -0.128, temp: 14, wind: 20, rain: 3 },
-  { name: "San Francisco", country: "United States", lat: 37.775, lon: -122.419, temp: 17, wind: 18, rain: 0 },
-  { name: "Los Angeles", country: "United States", lat: 34.052, lon: -118.244, temp: 24, wind: 12, rain: 0 },
-  { name: "Chicago", country: "United States", lat: 41.878, lon: -87.630, temp: 18, wind: 23, rain: 1 },
-  { name: "Miami", country: "United States", lat: 25.762, lon: -80.192, temp: 28, wind: 16, rain: 4 },
-  { name: "Mexico City", country: "Mexico", lat: 19.433, lon: -99.133, temp: 21, wind: 11, rain: 6 },
-  { name: "Sao Paulo", country: "Brazil", lat: -23.551, lon: -46.633, temp: 23, wind: 14, rain: 5 },
-  { name: "Reykjavik", country: "Iceland", lat: 64.147, lon: -21.942, temp: 7, wind: 27, rain: 2 },
-  { name: "Paris", country: "France", lat: 48.857, lon: 2.352, temp: 16, wind: 13, rain: 1 },
-  { name: "Cairo", country: "Egypt", lat: 30.044, lon: 31.236, temp: 31, wind: 15, rain: 0 },
-  { name: "Nairobi", country: "Kenya", lat: -1.292, lon: 36.822, temp: 23, wind: 13, rain: 4 },
-  { name: "Cape Town", country: "South Africa", lat: -33.925, lon: 18.424, temp: 16, wind: 24, rain: 1 },
-  { name: "Dubai", country: "United Arab Emirates", lat: 25.205, lon: 55.271, temp: 35, wind: 19, rain: 0 },
-  { name: "Mumbai", country: "India", lat: 19.076, lon: 72.878, temp: 30, wind: 21, rain: 8 },
-  { name: "Singapore", country: "Singapore", lat: 1.352, lon: 103.820, temp: 29, wind: 12, rain: 11 },
-  { name: "Tokyo", country: "Japan", lat: 35.676, lon: 139.650, temp: 25, wind: 19, rain: 2 },
-  { name: "Sydney", country: "Australia", lat: -33.869, lon: 151.209, temp: 18, wind: 17, rain: 1 },
-  { name: "Auckland", country: "New Zealand", lat: -36.851, lon: 174.764, temp: 16, wind: 16, rain: 3 },
+  { name: "New York", country: "United States", lat: 40.713, lon: -74.006, timeZone: "America/New_York", temp: 20, wind: 17, rain: 2 },
+  { name: "London", country: "United Kingdom", lat: 51.507, lon: -0.128, timeZone: "Europe/London", temp: 14, wind: 20, rain: 3 },
+  { name: "San Francisco", country: "United States", lat: 37.775, lon: -122.419, timeZone: "America/Los_Angeles", temp: 17, wind: 18, rain: 0 },
+  { name: "Los Angeles", country: "United States", lat: 34.052, lon: -118.244, timeZone: "America/Los_Angeles", temp: 24, wind: 12, rain: 0 },
+  { name: "Chicago", country: "United States", lat: 41.878, lon: -87.630, timeZone: "America/Chicago", temp: 18, wind: 23, rain: 1 },
+  { name: "Miami", country: "United States", lat: 25.762, lon: -80.192, timeZone: "America/New_York", temp: 28, wind: 16, rain: 4 },
+  { name: "Mexico City", country: "Mexico", lat: 19.433, lon: -99.133, timeZone: "America/Mexico_City", temp: 21, wind: 11, rain: 6 },
+  { name: "Sao Paulo", country: "Brazil", lat: -23.551, lon: -46.633, timeZone: "America/Sao_Paulo", temp: 23, wind: 14, rain: 5 },
+  { name: "Reykjavik", country: "Iceland", lat: 64.147, lon: -21.942, timeZone: "Atlantic/Reykjavik", temp: 7, wind: 27, rain: 2 },
+  { name: "Paris", country: "France", lat: 48.857, lon: 2.352, timeZone: "Europe/Paris", temp: 16, wind: 13, rain: 1 },
+  { name: "Cairo", country: "Egypt", lat: 30.044, lon: 31.236, timeZone: "Africa/Cairo", temp: 31, wind: 15, rain: 0 },
+  { name: "Nairobi", country: "Kenya", lat: -1.292, lon: 36.822, timeZone: "Africa/Nairobi", temp: 23, wind: 13, rain: 4 },
+  { name: "Cape Town", country: "South Africa", lat: -33.925, lon: 18.424, timeZone: "Africa/Johannesburg", temp: 16, wind: 24, rain: 1 },
+  { name: "Dubai", country: "United Arab Emirates", lat: 25.205, lon: 55.271, timeZone: "Asia/Dubai", temp: 35, wind: 19, rain: 0 },
+  { name: "Mumbai", country: "India", lat: 19.076, lon: 72.878, timeZone: "Asia/Kolkata", temp: 30, wind: 21, rain: 8 },
+  { name: "Singapore", country: "Singapore", lat: 1.352, lon: 103.820, timeZone: "Asia/Singapore", temp: 29, wind: 12, rain: 11 },
+  { name: "Tokyo", country: "Japan", lat: 35.676, lon: 139.650, timeZone: "Asia/Tokyo", temp: 25, wind: 19, rain: 2 },
+  { name: "Sydney", country: "Australia", lat: -33.869, lon: 151.209, timeZone: "Australia/Sydney", temp: 18, wind: 17, rain: 1 },
+  { name: "Auckland", country: "New Zealand", lat: -36.851, lon: 174.764, timeZone: "Pacific/Auckland", temp: 16, wind: 16, rain: 3 },
 ];
 
 const textureBase = "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets";
@@ -152,9 +158,10 @@ const earthMaterial = new THREE.MeshPhongMaterial({
 });
 const earth = new THREE.Mesh(earthGeometry, earthMaterial);
 root.add(earth);
-const earthTextures = { nasa: null, satellite: null };
-let activeEarthStyle = "nasa";
-loadEarthSurfaceTextures();
+loadLocalTexture(localNasaTextures.earth, (texture) => {
+  earthMaterial.map = texture;
+  earthMaterial.needsUpdate = true;
+});
 loadRemoteTexture(`${textureBase}/earth_bump_2048.jpg`, (texture) => {
   earthMaterial.bumpMap = texture;
   earthMaterial.needsUpdate = true;
@@ -163,39 +170,6 @@ loadRemoteTexture(`${textureBase}/earth_specular_2048.jpg`, (texture) => {
   earthMaterial.specularMap = texture;
   earthMaterial.needsUpdate = true;
 });
-
-function loadEarthSurfaceTextures() {
-  loadLocalTexture(localNasaTextures.earth, (texture) => {
-    earthTextures.nasa = texture;
-    if (activeEarthStyle === "nasa") applyEarthStyle("nasa");
-  });
-
-  loadRemoteTexture(`${textureBase}/earth_atmos_2048.jpg`, (texture) => {
-    earthTextures.satellite = texture;
-    if (activeEarthStyle === "satellite") applyEarthStyle("satellite");
-  }, () => {
-    if (activeEarthStyle === "satellite") {
-      textureStatus.textContent = "Satellite image unavailable";
-    }
-  });
-}
-
-function applyEarthStyle(style) {
-  activeEarthStyle = style;
-  const texture = earthTextures[style];
-  if (!texture) {
-    textureStatus.textContent = style === "nasa"
-      ? "Loading NASA Blue Marble..."
-      : "Loading satellite Earth...";
-    return;
-  }
-
-  earthMaterial.map = texture;
-  earthMaterial.needsUpdate = true;
-  textureStatus.textContent = style === "nasa"
-    ? "Local NASA Blue Marble surface loaded"
-    : "Satellite Earth texture loaded";
-}
 
 function loadNasaCityLights() {
   loadLocalTexture(localNasaTextures.lights, (texture) => {
@@ -228,7 +202,7 @@ const temperatureMaterial = new THREE.MeshBasicMaterial({
   map: initialSyntheticFrame.temperature,
   transparent: true,
   // Temperature is the primary surface layer, so keep it vivid enough to
-  // read over satellite imagery and independent of the day/night lighting.
+  // read over the base Earth imagery and independent of day/night lighting.
   opacity: 0.82,
   depthWrite: false,
 });
@@ -313,6 +287,7 @@ let suggestedCities = [];
 let citySuggestionQuery = "";
 let citySuggestionTimer = null;
 let citySuggestionRequest = 0;
+const locationTimeZoneRequests = new Map();
 let controllerSocket = null;
 let controllerReconnectTimer = null;
 let controllerConnected = false;
@@ -348,10 +323,6 @@ weatherSourceSelect.addEventListener("change", () => {
 
 dayNightToggle.addEventListener("change", () => {
   setDayNight(dayNightToggle.checked);
-});
-
-earthStyleSelect.addEventListener("change", () => {
-  setEarthStyle(earthStyleSelect.value);
 });
 
 citySearch.addEventListener("submit", async (event) => {
@@ -414,6 +385,13 @@ function closeControllerPairingPanel() {
 }
 
 controllerPairingClose.addEventListener("click", closeControllerPairingPanel);
+
+controllerDisconnectButton.addEventListener("click", () => {
+  if (!controllerConnected) return;
+  controllerDisconnectButton.disabled = true;
+  controllerConnectionStatus.textContent = "Disconnecting iPad…";
+  sendControllerMessage({ type: "controller.disconnect" });
+});
 
 canvas.addEventListener("pointerdown", (event) => {
   pointerDown = true;
@@ -484,13 +462,6 @@ function setDayNight(value) {
   publishControlState();
 }
 
-function setEarthStyle(style) {
-  if (![...earthStyleSelect.options].some((option) => option.value === style)) return;
-  earthStyleSelect.value = style;
-  applyEarthStyle(style);
-  publishControlState();
-}
-
 function setWeatherLayer(layerId, visible) {
   const input = layerInputs.find((candidate) => candidate.dataset.layer === layerId);
   if (!input) return;
@@ -507,7 +478,6 @@ function controllerState(extra = {}) {
     earth: {
       rotating: earthRotationEnabled,
       dayNight: dayNightEnabled,
-      style: earthStyleSelect.value,
     },
     camera: {
       distance: targetCameraPosition.length(),
@@ -536,10 +506,10 @@ function controllerState(extra = {}) {
       country: selectedCity.country,
       lat: selectedCity.lat,
       lon: selectedCity.lon,
+      timeZone: selectedCity.timeZone,
     } : null,
     capabilities: {
       weatherSources: [...weatherSourceSelect.options].map((option) => ({ id: option.value, label: option.textContent })),
-      earthStyles: [...earthStyleSelect.options].map((option) => ({ id: option.value, label: option.textContent })),
     },
     ...extra,
   };
@@ -555,7 +525,14 @@ function publishControlState(extra) {
 
 function setControllerStatus(message, connected = false) {
   controllerConnected = connected;
+  stage.classList.toggle("ipad-controller-connected", connected);
+  controllerPanelEyebrow.hidden = connected;
+  controllerPanelTitle.textContent = connected ? "iPad connected" : "Scan to connect";
+  controllerPairingDetails.hidden = connected;
+  controllerConnectedDetails.hidden = !connected;
+  controllerDisconnectButton.disabled = false;
   controllerConnectionStatus.textContent = message;
+  controllerConnectionStatus.hidden = connected;
   controllerConnectionStatus.classList.toggle("is-connected", connected);
   setControlState(
     controllerPairButton,
@@ -644,6 +621,7 @@ function executeRemoteCommand(command, id) {
         country: String(command.city.country || "").slice(0, 120),
         lat,
         lon,
+        timeZone: isValidTimeZone(command.city.timeZone) ? command.city.timeZone : undefined,
       };
       cityInput.value = city.name;
       focusCity(city);
@@ -676,9 +654,6 @@ function executeRemoteCommand(command, id) {
     case commands.EARTH_DAY_NIGHT_SET:
       setDayNight(command.enabled);
       break;
-    case commands.EARTH_STYLE_SET:
-      setEarthStyle(command.style);
-      break;
     default:
       accepted = false;
   }
@@ -696,9 +671,9 @@ async function setWeatherSource(mode) {
     if (request !== requestedWeatherSource) return;
     activatePipeline(pipeline, mode === "graphcast" ? {
       mode: "pipeline",
-      label: "GraphCast Small — latest pipeline data",
-      status: `Latest bundled GraphCast Small run, initialized ${new Date(pipeline.manifest.initializationTime).toUTCString().replace(":00 GMT", " UTC")}.`,
-      cityNote: "Latest bundled GraphCast Small forecast data",
+      label: "Google GraphCast Small",
+      status: "",
+      cityNote: "Google GraphCast Small sample forecast data",
     } : undefined);
   } catch (error) {
     if (request !== requestedWeatherSource) return;
@@ -707,9 +682,9 @@ async function setWeatherSource(mode) {
       activateSynthetic();
     } else {
       activateUnavailablePipeline(mode === "graphcast" ? {
-        label: "GraphCast Small — latest pipeline unavailable",
-        message: "The latest GraphCast Small assets could not be loaded.",
-        status: "Latest GraphCast Small forecast data could not be loaded.",
+        label: "Google GraphCast Small",
+        message: "Google GraphCast Small sample data could not be loaded.",
+        status: "Forecast data unavailable.",
       } : undefined);
     }
   }
@@ -855,7 +830,7 @@ function activatePipeline({ manifest, model, manifestUrl, surface, surfaces }, s
   buildPipelineLayers(surface);
   buildLayerControls(pipelineLayerControls(surface), "pipeline");
   forecastSourceLabel.textContent = source.label ?? "Numeric pipeline sample";
-  textureStatus.textContent = source.status ?? "GraphCast Small sample data, not live operational weather.";
+  textureStatus.textContent = source.status ?? "Google GraphCast Small sample data, not live operational weather.";
   updateFrame(0);
 }
 
@@ -915,11 +890,12 @@ function activateUnavailablePipeline(source = {}) {
   slider.disabled = true;
   forecastSourceLabel.textContent = source.label ?? "Real pipeline unavailable";
   label.textContent = "--";
+  sampleDateLabel.textContent = "";
   timeLabel.textContent = source.message ?? "Published forecast assets could not be loaded.";
   textureStatus.textContent = source.status ?? "Real pipeline mode requires numeric UI-surface JSON in ./forecasts/.";
 }
 
-function buildLayerControls(layers, source) {
+function buildLayerControls(layers) {
   layerControls.replaceChildren();
   layerInputs = layers.map((layer, index) => {
     const labelElement = document.createElement("label");
@@ -993,7 +969,7 @@ function applyPipelineFrame(index) {
     if (selectedCity) updateLocationForecast(selectedCity, forecastFrames[index]);
   }).catch(() => {
     textureStatus.textContent = activeWeatherSource === "graphcast-era5t"
-      ? `GraphCast Small — ERA5T frame t+${forecastFrames[index].leadHours}.json could not be loaded.`
+      ? `Google GraphCast Small — ERA5T frame t+${forecastFrames[index].leadHours}.json could not be loaded.`
       : "Selected pipeline frame could not load.";
   });
 }
@@ -1077,17 +1053,22 @@ function updateForecastReadout(index) {
   const frame = forecastFrames[index];
   slider.value = String(index);
   label.textContent = `T+${String(frame.leadHours).padStart(2, "0")}h`;
-  if (isNumericPipelineSource()) {
-    const initialization = new Date(pipelineManifest.initializationTime).toUTCString().replace(":00 GMT", " UTC");
-    timeLabel.textContent = activeWeatherSource === "graphcast-era5t"
-      ? `Initialized ${initialization} · Valid ${frame.validTime.toUTCString().replace(":00 GMT", " UTC")}`
-      : `${pipelineManifest.model?.displayName ?? "Forecast pipeline"} sample demo, initialized ${initialization}, T+${frame.leadHours}h`;
-  } else {
-    timeLabel.textContent = frame.validTime.toUTCString().replace(":00 GMT", " UTC");
-  }
+  const initialization = isNumericPipelineSource()
+    ? new Date(pipelineManifest.initializationTime)
+    : forecastStart;
+  sampleDateLabel.textContent = `Sample date: ${formatUtcDate(initialization)}`;
+  timeLabel.textContent = `Current time: ${formatUtcDateTime(frame.validTime)}`;
   updateLighting();
   if (selectedCity) updateLocationForecast(selectedCity, frame);
   publishControlState();
+}
+
+function formatUtcDate(date) {
+  return date.toUTCString().replace(/^[A-Z][a-z]{2},\s/, "").slice(0, 11);
+}
+
+function formatUtcDateTime(date) {
+  return date.toUTCString().replace(/^[A-Z][a-z]{2},\s/, "").replace(":00 GMT", " UTC");
 }
 
 function applyFrameTextures(index, syntheticFrame = getSyntheticFrame(index)) {
@@ -1203,9 +1184,9 @@ function setLayerVisibility() {
 
 const layerLegendDefinitions = {
   temperature: {
-    title: "Temperature (°C)",
+    title: "Temperature (°C / °F)",
     gradient: "linear-gradient(90deg, #5b1a98 0%, #315cff 18%, #12c7ff 35%, #3ee59b 50%, #f6eb5b 64%, #ff9b2f 77%, #f13b2b 89%, #a90b4e 100%)",
-    labels: [["−30°", "0%"], ["−10°", "25%"], ["0°", "42%"], ["10°", "55%"], ["20°", "68%"], ["30°", "82%"], ["40°+", "100%"]],
+    labels: [[-30, "0%"], [0, "42%"], [20, "68%"], [40, "100%"]],
   },
   rain: {
     title: "6 h precipitation (mm)",
@@ -1216,7 +1197,7 @@ const layerLegendDefinitions = {
     entries: [["#457eff", "970 low"], ["#85d7e7", "995"], ["#faf1b7", "1020"], ["#ff9165", "1045 high"]],
   },
   wind: {
-    title: "10 m wind", entries: [["#8bffd6", "Streamline direction"], ["#dff", "Faster motion = stronger wind"]],
+    title: "10 m wind (km/h / mph)", entries: [["#8bffd6", "Streamline direction"], ["#dff", "Faster motion = stronger wind"]],
   },
   moisture: { title: "Moisture", entries: [["#bee2ff", "Higher moisture"]] },
 };
@@ -1239,11 +1220,16 @@ function updateActiveLayerLegend() {
     activeLayerLegend.append(title);
     if (definition.gradient) {
       const scale = document.createElement("div");
-      scale.className = "legend-gradient-scale";
+      scale.className = "legend-gradient-scale is-dual-unit";
       scale.style.setProperty("--legend-gradient", definition.gradient);
-      definition.labels.forEach(([label, position]) => {
+      definition.labels.forEach(([celsius, position], index) => {
         const tick = document.createElement("span");
-        tick.textContent = label;
+        const suffix = index === definition.labels.length - 1 ? "+" : "";
+        const metric = document.createElement("b");
+        const imperial = document.createElement("em");
+        metric.textContent = `${formatSignedNumber(celsius)}${suffix}°C`;
+        imperial.textContent = `${formatSignedNumber(celsius * 9 / 5 + 32)}${suffix}°F`;
+        tick.append(metric, imperial);
         tick.style.setProperty("--legend-position", position);
         scale.append(tick);
       });
@@ -1511,6 +1497,7 @@ function focusCity(city, { zoomToLocation = true, loadTiles = true } = {}) {
   locationCoordinates.textContent = `${formatLatitude(city.lat)}, ${formatLongitude(city.lon)} · ${city.country}`;
   locationPanel.hidden = false;
   updateLocationForecast(city, forecastFrames[activeFrame]);
+  ensureLocationTimeZone(city);
   if (loadTiles) loadRegionalImagery(city);
   requestAnimationFrame(() => requestAnimationFrame(updateLocationPanelPosition));
   publishControlState();
@@ -1796,22 +1783,100 @@ function getEarthScreenCircle() {
   return { ...center, radius };
 }
 
+function formatSignedNumber(value) {
+  return String(Math.round(value)).replace("-", "−");
+}
+
+function formatTemperaturePair(celsius, decimals = 1) {
+  const fahrenheit = celsius * 9 / 5 + 32;
+  return `${celsius.toFixed(decimals)} °C · ${fahrenheit.toFixed(decimals)} °F`;
+}
+
+function formatWindSpeedPair(kilometersPerHour, decimals = 1) {
+  const milesPerHour = kilometersPerHour * 0.621371;
+  return `${kilometersPerHour.toFixed(decimals)} km/h · ${milesPerHour.toFixed(decimals)} mph`;
+}
+
+function isValidTimeZone(timeZone) {
+  if (typeof timeZone !== "string" || !timeZone) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function formatLocationLocalTime(date, city) {
+  if (isValidTimeZone(city.timeZone)) {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: city.timeZone,
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(date);
+  }
+
+  // Keep direct globe selections useful while their civil time zone is being
+  // resolved. Longitude supplies a deterministic nearest-hour UTC offset.
+  const offsetHours = clamp(Math.round(city.lon / 15), -12, 14);
+  const localDate = new Date(date.getTime() + offsetHours * 3_600_000);
+  const localText = new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(localDate);
+  const sign = offsetHours < 0 ? "−" : "+";
+  return `${localText} UTC${sign}${String(Math.abs(offsetHours)).padStart(2, "0")}:00`;
+}
+
+async function ensureLocationTimeZone(city) {
+  if (isValidTimeZone(city.timeZone)) return;
+  const key = `${city.lat.toFixed(4)},${city.lon.toFixed(4)}`;
+  if (!locationTimeZoneRequests.has(key)) {
+    const request = lookupLocationTimeZone(city.lat, city.lon).catch(() => null);
+    locationTimeZoneRequests.set(key, request);
+  }
+  const timeZone = await locationTimeZoneRequests.get(key);
+  if (!timeZone) return;
+  city.timeZone = timeZone;
+  if (selectedCity === city) updateLocationForecast(city, forecastFrames[activeFrame]);
+}
+
+async function lookupLocationTimeZone(lat, lon) {
+  const url = new URL("https://api.open-meteo.com/v1/forecast");
+  url.search = new URLSearchParams({
+    latitude: lat.toFixed(5),
+    longitude: lon.toFixed(5),
+    current: "temperature_2m",
+    timezone: "auto",
+    forecast_days: "1",
+  });
+  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!response.ok) return null;
+  const timeZone = (await response.json()).timezone;
+  return isValidTimeZone(timeZone) ? timeZone : null;
+}
+
 function updateLocationForecast(city, frame) {
+  locationLocalTime.textContent = formatLocationLocalTime(frame.validTime, city);
   if (isNumericPipelineSource()) {
     const output = samplePipelineForecast(city.lon, city.lat, frame.index);
-    locationTemperature.textContent = output.temperature === null ? "Unavailable" : `${output.temperature.toFixed(1)} °C`;
+    locationTemperature.textContent = output.temperature === null ? "Unavailable" : formatTemperaturePair(output.temperature);
     const windSpeed = output.windU === null || output.windV === null ? null : Math.hypot(output.windU, output.windV);
-    locationWind.textContent = windSpeed === null ? "Unavailable" : `${(windSpeed * 3.6).toFixed(1)} km/h`;
+    locationWind.textContent = windSpeed === null ? "Unavailable" : formatWindSpeedPair(windSpeed * 3.6);
     locationPrecipitation.textContent = output.rain === null ? "Unavailable" : `${output.rain.toFixed(1)} mm`;
-    locationModelNote.textContent = pipelineManifest._source?.cityNote ?? "GraphCast Small sample data, not live operational weather";
     return;
   }
   const output = sampleForecast(city.lon, city.lat, frame.index);
-  const wind = Math.round(Math.hypot(output.windU, output.windV));
-  locationTemperature.textContent = `${output.temperature.toFixed(1)} °C`;
-  locationWind.textContent = `${wind} km/h`;
+  const wind = Math.hypot(output.windU, output.windV);
+  locationTemperature.textContent = formatTemperaturePair(output.temperature);
+  locationWind.textContent = formatWindSpeedPair(wind, 0);
   locationPrecipitation.textContent = `${output.rain.toFixed(1)} mm`;
-  locationModelNote.textContent = "Illustrative forecast values for this MVP";
 }
 
 async function findCity(query) {
@@ -1831,6 +1896,7 @@ async function findCities(query, count = 6) {
       country: result.country ?? "Selected location",
       lat: result.latitude,
       lon: result.longitude,
+      timeZone: isValidTimeZone(result.timezone) ? result.timezone : undefined,
       ...makeSyntheticBaseline(result.latitude, result.longitude),
     }));
   } catch {
@@ -1997,9 +2063,6 @@ function loadTexture(loader, url, onLoad, onError) {
     () => {
       console.warn(`Could not load texture: ${url}`);
       onError?.();
-      if (url.includes("earth_atmos") && !onError) {
-        textureStatus.textContent = "Offline fallback map active";
-      }
     },
   );
 }

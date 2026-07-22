@@ -378,7 +378,7 @@ button svg,
 .state-button .status-dot { width: 6px; height: 6px; background: var(--muted); box-shadow: none; }
 .state-button[aria-pressed="true"] .status-dot { background: var(--green); box-shadow: 0 0 5px var(--green); }
 
-.select-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 11px; }
+.select-grid { display: grid; gap: 8px; margin-top: 11px; }
 .select-grid label,
 .field-label { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
 .select-wrap { position: relative; display: block; margin-top: 4px; }

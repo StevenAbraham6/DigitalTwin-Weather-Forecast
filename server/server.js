@@ -163,6 +163,14 @@ function handleSocketMessage(socket, request, data, isBinary) {
     sendJson(session.display, message);
     return;
   }
+  if (socket.role === ROLES.DISPLAY && message.type === "controller.disconnect") {
+    const controller = session.controller;
+    session.controller = null;
+    sendJson(controller, { type: "session.ended", message: "The globe display disconnected this iPad controller." });
+    controller?.close(1000, "Disconnected by display");
+    sendJson(session.display, { type: "controller.status", connected: false });
+    return;
+  }
   if (socket.role === ROLES.DISPLAY && ["state", "event", "command.result"].includes(message.type)) {
     if (message.type === "state") session.lastState = message;
     sendJson(session.controller, message);

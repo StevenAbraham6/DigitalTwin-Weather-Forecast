@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Digital Twin Controller</title>
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./controller.css?v=20260721-portrait-tiles-small" />
+    <link rel="stylesheet" href="./controller.css?v=20260721-blue-marble-default" />
   </head>
   <body>
     <main class="controller-shell">
@@ -18,19 +18,19 @@
           <h1>Globe controller</h1>
         </div>
         <div class="connection-control">
-          <button id="connection-pill" class="connection-pill" type="button" aria-expanded="false" aria-controls="connection-menu" disabled>
-            <span class="status-dot"></span>
-            <strong>Connecting</strong>
-            <svg class="connection-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
-          </button>
-          <div id="connection-menu" class="connection-menu" hidden>
-            <span class="eyebrow">Connection</span>
-            <p>Control is linked to the globe display.</p>
-            <button id="disconnect-controller" class="disconnect-button icon-label-button" type="button">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8H6a4 4 0 0 0 0 8h3M15 8h3a4 4 0 0 1 0 8h-3M8 12h8M5 4l14 16"/></svg>
-              <span class="button-label">Disconnect</span>
+            <button id="connection-pill" class="connection-pill" type="button" aria-expanded="false" aria-controls="connection-menu" disabled>
+              <span class="status-dot"></span>
+              <strong>Connecting</strong>
+              <svg class="connection-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
             </button>
-          </div>
+            <div id="connection-menu" class="connection-menu" hidden>
+              <span class="eyebrow">Connection</span>
+              <p>Control is linked to the globe display.</p>
+              <button id="disconnect-controller" class="disconnect-button icon-label-button" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8H6a4 4 0 0 0 0 8h3M15 8h3a4 4 0 0 1 0 8h-3M8 12h8M5 4l14 16"/></svg>
+                <span class="button-label">Disconnect</span>
+              </button>
+            </div>
         </div>
       </header>
 
@@ -101,7 +101,6 @@
             </div>
             <div class="select-grid">
               <label>Weather model<span class="select-wrap"><select id="weather-source-controller"></select></span></label>
-              <label>Earth image<span class="select-wrap"><select id="earth-style-controller"></select></span></label>
             </div>
             <div class="quick-toggles">
               <button id="day-night-controller" class="icon-label-button" type="button" aria-pressed="true">
@@ -137,6 +136,6 @@
     </main>
 
     <script src="../shared/protocol.js"></script>
-    <script src="./controller.js?v=20260721-figma-redesign"></script>
+    <script src="./controller.js?v=20260721-blue-marble-default"></script>
   </body>
 </html>

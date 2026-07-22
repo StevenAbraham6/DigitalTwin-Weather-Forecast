@@ -23,7 +23,6 @@ const cityClear = document.querySelector("#city-clear");
 const selectedCity = document.querySelector("#selected-city");
 const weatherVisible = document.querySelector("#weather-visible");
 const weatherSource = document.querySelector("#weather-source-controller");
-const earthStyle = document.querySelector("#earth-style-controller");
 const dayNight = document.querySelector("#day-night-controller");
 const earthRotation = document.querySelector("#earth-rotation-controller");
 const weatherLayers = document.querySelector("#weather-layers-controller");
@@ -116,6 +115,9 @@ function handleMessage(event) {
     pairingMessage.textContent = message.message;
     setConnection("Pairing failed", "error");
   } else if (message.type === "session.ended") {
+    credentials = null;
+    disconnectingManually = true;
+    pairingMessage.textContent = message.message;
     setConnection("Globe disconnected", "error");
   } else if (message.type === "state") {
     applyState(message.state);
@@ -289,6 +291,7 @@ cityForm.addEventListener("submit", async (event) => {
       area: city.admin1 || "",
       lat: city.latitude,
       lon: city.longitude,
+      timeZone: city.timezone,
     })));
   } catch {
     cityResults.textContent = "City search is unavailable. Check the network and try again.";
@@ -325,7 +328,6 @@ cityClear.addEventListener("click", () => {
 });
 weatherVisible.addEventListener("click", () => sendCommand({ type: protocol.COMMANDS.WEATHER_VISIBLE_SET, visible: !currentState?.weather.visible }));
 weatherSource.addEventListener("change", () => sendCommand({ type: protocol.COMMANDS.WEATHER_SOURCE_SET, source: weatherSource.value }));
-earthStyle.addEventListener("change", () => sendCommand({ type: protocol.COMMANDS.EARTH_STYLE_SET, style: earthStyle.value }));
 dayNight.addEventListener("click", () => sendCommand({ type: protocol.COMMANDS.EARTH_DAY_NIGHT_SET, enabled: !currentState?.earth.dayNight }));
 earthRotation.addEventListener("click", () => sendCommand({ type: protocol.COMMANDS.EARTH_ROTATION_SET, rotating: !currentState?.earth.rotating }));
 playback.addEventListener("click", () => sendCommand({ type: protocol.COMMANDS.PLAYBACK_SET, playing: !currentState?.playback.playing }));
@@ -363,7 +365,6 @@ function applyState(state) {
   if (!state || (currentState && state.revision <= currentState.revision)) return;
   currentState = state;
   syncOptions(weatherSource, state.capabilities.weatherSources, state.weather.requestedSource);
-  syncOptions(earthStyle, state.capabilities.earthStyles, state.earth.style);
 
   weatherVisible.querySelector(".button-label").textContent = state.weather.visible ? "Weather on" : "Weather off";
   weatherVisible.setAttribute("aria-pressed", String(state.weather.visible));

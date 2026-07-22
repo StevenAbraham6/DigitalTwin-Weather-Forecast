@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Digital Twin Earth</title>
-    <link rel="stylesheet" href="./styles.css?v=20260710-icon-controls" />
+    <link rel="stylesheet" href="./styles.css?v=20260722-location-local-time" />
   </head>
   <body>
     <main class="stage">
@@ -31,27 +31,21 @@
           <h2 id="location-name">New York</h2>
           <p id="location-coordinates" class="location-coordinates">40.7&deg; N, 74.0&deg; W</p>
           <div class="location-stats">
+            <div><span>Local time</span><strong id="location-local-time">--</strong></div>
             <div><span>2 m temperature</span><strong id="location-temperature">--</strong></div>
             <div><span>10 m wind</span><strong id="location-wind">--</strong></div>
             <div><span>6 h precipitation</span><strong id="location-precipitation">--</strong></div>
           </div>
-          <p class="model-note">Illustrative forecast values for this MVP</p>
       </aside>
       <div class="location-leader" id="location-leader" aria-hidden="true" hidden></div>
       <div class="map-attribution" id="map-attribution" hidden>Map imagery &copy; Google</div>
 
       <fieldset class="layer-panel" aria-label="Forecast layers">
           <legend>Forecast layers</legend>
-          <label class="earth-select" for="earth-style">Earth image
-            <select id="earth-style">
-              <option value="satellite">Satellite</option>
-              <option value="nasa" selected>NASA Blue Marble</option>
-            </select>
-          </label>
           <label><input id="day-night-toggle" type="checkbox" checked /> Day / night</label>
-          <label class="earth-select" for="weather-source">Weather data
+          <label class="layer-select" for="weather-source">Weather data
             <select id="weather-source">
-              <option value="graphcast">GraphCast Small — latest pipeline data</option>
+              <option value="graphcast">Google GraphCast Small</option>
               <option value="synthetic">Synthetic demo</option>
             </select>
           </label>
@@ -62,20 +56,26 @@
 
       <aside id="controller-pairing-panel" class="controller-pairing-panel" aria-live="polite" hidden>
         <button id="controller-pairing-close" class="icon-button" type="button" title="Close controller pairing" aria-label="Close controller pairing">&times;</button>
-        <span class="eyebrow">iPad controller</span>
-        <h2>Scan to connect</h2>
-        <img id="controller-pairing-qr" alt="QR code that opens the iPad controller" />
-        <p>Or open <strong id="controller-pairing-url">the controller URL</strong> and enter:</p>
-        <output id="controller-pairing-code" class="controller-pairing-code">------</output>
+        <span id="controller-panel-eyebrow" class="eyebrow">iPad controller</span>
+        <h2 id="controller-panel-title">Scan to connect</h2>
+        <div id="controller-pairing-details">
+          <img id="controller-pairing-qr" alt="QR code that opens the iPad controller" />
+          <p>Or open <strong id="controller-pairing-url">the controller URL</strong> and enter:</p>
+          <output id="controller-pairing-code" class="controller-pairing-code">------</output>
+        </div>
+        <div id="controller-connected-details" class="controller-connected-details" hidden>
+          <button id="controller-disconnect-button" class="controller-disconnect-button" type="button">Disconnect iPad</button>
+        </div>
         <span id="controller-connection-status" class="controller-connection-status">Starting controller service…</span>
       </aside>
 
       <section class="hud" aria-label="Forecast controls">
         <div class="forecast-readout">
-          <span class="eyebrow" id="forecast-source">Loading forecast source</span>
           <strong id="forecast-label">T+00h</strong>
-          <span id="forecast-time">Jul 8, 2026 00:00 UTC</span>
-          <span id="texture-status">Loading Earth imagery...</span>
+          <span class="eyebrow" id="forecast-source">Loading forecast source</span>
+          <span id="forecast-sample-date">Sample date: Jul 8, 2026</span>
+          <span id="forecast-time">Current time: Jul 8, 2026 00:00 UTC</span>
+          <span id="texture-status"></span>
         </div>
 
         <div class="controls">
@@ -111,6 +111,6 @@
     <script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
     <script src="./config.js"></script>
     <script src="./shared/protocol.js"></script>
-    <script src="./main.js?v=20260721-pairing-auto-close"></script>
+    <script src="./main.js?v=20260722-location-local-time"></script>
   </body>
 </html>

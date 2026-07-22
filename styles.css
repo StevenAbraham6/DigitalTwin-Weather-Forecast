@@ -129,7 +129,7 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  width: min(238px, calc(100vw - 32px));
+  width: min(284px, calc(100vw - 32px));
   padding: 13px 14px;
   border: 1px solid rgba(139, 255, 214, 0.26);
   border-radius: 7px;
@@ -191,7 +191,7 @@ body {
   right: clamp(16px, 2.4vw, 28px);
   display: grid;
   gap: 8px;
-  width: 150px;
+  width: 190px;
   margin: 0;
   padding: 11px 13px 13px;
   border: 1px solid rgba(255, 255, 255, 0.15);
@@ -219,7 +219,7 @@ body {
   cursor: pointer;
 }
 
-.layer-panel .earth-select {
+.layer-panel .layer-select {
   display: grid;
   grid-column: 1 / -1;
   gap: 5px;
@@ -230,7 +230,7 @@ body {
   text-transform: uppercase;
 }
 
-.earth-select select {
+.layer-select select {
   width: 100%;
   height: 30px;
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -251,12 +251,17 @@ body {
   accent-color: #8bffd6;
 }
 
+#layer-controls {
+  display: grid;
+  gap: 4px;
+}
+
 .active-layer-legend {
   position: absolute;
   top: clamp(82px, 8vw, 116px);
   left: clamp(16px, 2.4vw, 28px);
   z-index: 2;
-  width: 172px;
+  width: min(244px, calc(100vw - 32px));
   padding: 11px 13px;
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 7px;
@@ -280,6 +285,10 @@ body {
 }
 
 .controller-pairing-panel[hidden] { display: none; }
+
+#controller-panel-eyebrow[hidden],
+.controller-connection-status[hidden],
+.controller-connected-details[hidden] { display: none; }
 
 .controller-pairing-panel h2 {
   margin: 5px 0 14px;
@@ -310,6 +319,18 @@ body {
   letter-spacing: 0.16em;
 }
 
+.controller-disconnect-button {
+  width: 100%;
+  border-color: rgba(255, 151, 139, 0.38);
+  color: #ffc1ba;
+  background: rgba(255, 107, 91, 0.1);
+}
+
+.controller-disconnect-button:hover {
+  border-color: rgba(255, 151, 139, 0.68);
+  background: rgba(255, 107, 91, 0.18);
+}
+
 .controller-connection-status {
   display: block;
   margin-top: 12px;
@@ -335,25 +356,38 @@ body {
 .legend-swatch { width: 13px; height: 8px; border-radius: 2px; background: var(--legend-color); }
 .legend-gradient-scale {
   position: relative;
-  height: 35px;
+  height: 54px;
   margin-top: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.32);
   border-radius: 3px;
-  background: var(--legend-gradient);
+  background: var(--legend-gradient) top / 100% 12px no-repeat;
+}
+.legend-gradient-scale::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 3px;
+  content: "";
+  pointer-events: none;
 }
 .legend-gradient-scale span {
   position: absolute;
-  top: calc(100% + 4px);
+  top: 18px;
   left: var(--legend-position);
   color: rgba(247, 251, 255, 0.8);
   font-size: 8px;
-  line-height: 1;
+  line-height: 1.35;
   white-space: nowrap;
   transform: translateX(-50%);
 }
+.legend-gradient-scale span b,
+.legend-gradient-scale span em { display: block; font-weight: 700; font-style: normal; }
+.legend-gradient-scale span em { color: rgba(247, 251, 255, 0.55); font-weight: 600; }
 .legend-gradient-scale span::before {
   position: absolute;
-  bottom: calc(100% + 3px);
+  bottom: calc(100% + 5px);
   left: 50%;
   width: 1px;
   height: 4px;
@@ -365,8 +399,7 @@ body {
 .legend-gradient-scale span:last-child { transform: translateX(-100%); }
 .legend-gradient-scale span:last-child::before { left: 100%; }
 
-.location-coordinates,
-.model-note {
+.location-coordinates {
   margin: 0;
   color: rgba(247, 251, 255, 0.62);
   font-size: 11px;
@@ -394,7 +427,9 @@ body {
 
 .location-stats strong {
   color: #a8ffe2;
-  font-size: 14px;
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .icon-button {
@@ -448,11 +483,17 @@ body {
   text-transform: uppercase;
 }
 
+#forecast-source {
+  color: #59b8ff;
+  margin-top: 4px;
+}
+
 #forecast-label {
   font-size: clamp(36px, 5.4vw, 62px);
   line-height: 0.95;
 }
 
+#forecast-sample-date,
 #forecast-time {
   color: rgba(247, 251, 255, 0.78);
   font-size: clamp(13px, 1.5vw, 18px);
@@ -461,6 +502,10 @@ body {
 #texture-status {
   color: rgba(247, 251, 255, 0.6);
   font-size: 12px;
+}
+
+#texture-status:empty {
+  display: none;
 }
 
 .controls {
@@ -543,6 +588,36 @@ button:hover {
 
 .control-icon.is-active .icon-stroke {
   display: none;
+}
+
+/* Once the iPad takes over, leave only read-only context and its connection entry point. */
+.stage.ipad-controller-connected .city-search,
+.stage.ipad-controller-connected .location-panel,
+.stage.ipad-controller-connected .location-leader,
+.stage.ipad-controller-connected .layer-panel,
+.stage.ipad-controller-connected #earth-rotation-toggle,
+.stage.ipad-controller-connected #play-toggle,
+.stage.ipad-controller-connected #weather-toggle,
+.stage.ipad-controller-connected #reset-view,
+.stage.ipad-controller-connected .slider-wrap {
+  display: none;
+}
+
+.stage.ipad-controller-connected .active-layer-legend {
+  top: clamp(16px, 2.4vw, 28px);
+}
+
+.stage.ipad-controller-connected .controls {
+  width: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.stage.ipad-controller-connected .control-toggles {
+  grid-template-columns: 1fr;
 }
 
 .slider-wrap {

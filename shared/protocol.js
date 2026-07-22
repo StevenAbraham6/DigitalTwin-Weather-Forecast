@@ -18,7 +18,6 @@
     WEATHER_SOURCE_SET: "weather.source.set",
     WEATHER_LAYER_SET: "weather.layer.set",
     EARTH_DAY_NIGHT_SET: "earth.dayNight.set",
-    EARTH_STYLE_SET: "earth.style.set",
   });
 
   function clampUnit(value) {
