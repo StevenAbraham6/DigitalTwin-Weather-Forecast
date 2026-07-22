@@ -5,7 +5,9 @@
   "description": "Digital Twin Earth display and local iPad controller",
   "scripts": {
     "start": "node server/server.js",
-    "check": "node --check server/server.js && node --check shared/protocol.js && node --check main.js && node --check controller/controller.js",
+    "check": "node --check server/server.js && node --check shared/protocol.js && node --check shared/forecast-binary.js && node --check main.js && node --check controller/controller.js && node --check scripts/forecast-binary-test.js",
+    "test": "npm run check && npm run test:forecast-binary",
+    "test:forecast-binary": "node scripts/forecast-binary-test.js",
     "smoke": "node scripts/controller-smoke-test.js"
   },
   "dependencies": {

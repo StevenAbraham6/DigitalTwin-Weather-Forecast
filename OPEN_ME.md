@@ -56,8 +56,18 @@ server starts.
 The engine creates versioned run directories and updates its `latest` manifest
 pointer after each publish. The UI checks that pointer every minute and whenever
 the page becomes visible, then reads the selected run's catalog, manifest, and
-`data/ui-surface/t+{leadHours}.json` grids for temperature, precipitation,
-pressure, and wind.
+schema 2.0 `data/ui-surface/t+{leadHours}.bin` snapshots for temperature,
+precipitation, pressure, and wind. Each snapshot contains every available field
+as little-endian Float32 values in the field-major order declared by
+`manifest.uiSurface.fields`. Missing values are IEEE-754 NaNs. The browser
+validates the declared layout and byte length before exposing zero-copy typed
+array views to the existing renderer. While an older schema 1.0 run remains the
+latest published forecast, the UI can still read its JSON surface frames; new
+schema 2.0 runs automatically use the binary path.
+
+The UI loads frames as playback reaches them and retains them in its existing
+in-memory cache. This binary-format cutover intentionally does not add
+prefetching, persistent browser storage, or byte-budget eviction.
 
 ## Automatic city descent
 

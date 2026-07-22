@@ -14,6 +14,7 @@ const maxMessageBytes = 32 * 1024;
 const sessions = new Map();
 
 const mimeTypes = {
+  ".bin": "application/octet-stream",
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".ico": "image/x-icon",
@@ -230,6 +231,7 @@ const server = http.createServer((request, response) => {
     }
     const headers = {
       "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream",
+      "Content-Length": stat.size,
       "Cache-Control": cacheControl(filePath),
       "X-Content-Type-Options": "nosniff",
     };

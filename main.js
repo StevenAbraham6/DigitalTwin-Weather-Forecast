@@ -46,6 +46,7 @@ const controllerPairingUrl = document.querySelector("#controller-pairing-url");
 const controllerPairingCode = document.querySelector("#controller-pairing-code");
 const controllerConnectionStatus = document.querySelector("#controller-connection-status");
 const controllerProtocol = window.DigitalTwinProtocol;
+const forecastBinary = window.DigitalTwinForecastBinary;
 const mapTilesConfig = window.DIGITAL_TWIN_CONFIG?.mapTiles ?? {};
 
 const forecastStart = new Date("2026-07-08T00:00:00Z");
@@ -701,8 +702,11 @@ async function loadPipelineForecast() {
   const model = catalog.models?.[0];
   if (!model?.latestManifestPath) throw new Error("Forecast catalog has no model manifest");
   const { manifest, manifestUrl } = await loadForecastManifest(model, catalogUrl);
-  if (!manifest.uiSurface?.pathTemplate || !manifest.leadTimesHours?.length) {
-    throw new Error("Forecast manifest has no numeric UI surface");
+  if (isBinaryForecastManifest(manifest)) {
+    if (!forecastBinary) throw new Error("Float32 forecast decoder could not load");
+    forecastBinary.validateManifest(manifest);
+  } else if (!isLegacyJsonForecastManifest(manifest)) {
+    throw new Error(`Unsupported forecast manifest schema ${manifest?.schemaVersion ?? "unknown"}`);
   }
   const surface = await loadPipelineSurfaceFrame(0, manifest, manifestUrl);
   return { manifest, model, manifestUrl, surface };
@@ -739,14 +743,31 @@ async function loadForecastManifest(model, catalogUrl) {
   return { manifest, manifestUrl };
 }
 
-function resolveManifestAssetPath(manifestUrl, pathTemplate, leadHours) {
-  const path = pathTemplate.replaceAll("{leadHours}", String(leadHours));
-  return new URL(path, new URL(".", manifestUrl));
-}
-
 function pipelineSurfaceCacheKey(manifest, frameIndex) {
   const leadHours = manifest?.leadTimesHours?.[frameIndex];
   return `${manifest?.runId ?? manifest?.initializationTime ?? "unknown"}:${leadHours ?? frameIndex}`;
+}
+
+function isBinaryForecastManifest(manifest) {
+  return manifest?.schemaVersion === forecastBinary?.SCHEMA_VERSION
+    && manifest?.uiSurface?.encoding === forecastBinary?.ENCODING;
+}
+
+function isLegacyJsonForecastManifest(manifest) {
+  return manifest?.schemaVersion === "1.0"
+    && manifest?.uiSurface?.encoding === "json"
+    && typeof manifest.uiSurface.pathTemplate === "string"
+    && Array.isArray(manifest.leadTimesHours)
+    && manifest.leadTimesHours.length > 0;
+}
+
+function validateLegacyJsonSurface(surface, manifest, leadHours) {
+  if (!surface?.grid || !surface?.fields) throw new Error("JSON UI surface is incomplete");
+  if (surface.grid.width !== manifest.grid?.width || surface.grid.height !== manifest.grid?.height) {
+    throw new Error("JSON UI surface grid does not match its manifest");
+  }
+  if (surface.leadHours !== leadHours) throw new Error("JSON UI surface lead time does not match its manifest");
+  return surface;
 }
 
 function loadPipelineSurfaceFrame(frameIndex, manifest = pipelineManifest, manifestUrl = pipelineManifest?._url, cache = pipelineSurfaceCache) {
@@ -755,13 +776,28 @@ function loadPipelineSurfaceFrame(frameIndex, manifest = pipelineManifest, manif
   if (cached) return cached instanceof Promise ? cached : Promise.resolve(cached);
   const leadHours = manifest?.leadTimesHours?.[frameIndex];
   if (leadHours === undefined) return Promise.reject(new Error("Unknown forecast lead time"));
-  const url = resolveManifestAssetPath(manifestUrl, manifest.uiSurface.pathTemplate, leadHours);
-  const request = fetchJson(url).then((surface) => {
-    if (!surface.grid || !surface.fields) throw new Error("UI surface is incomplete");
-    cache.set(cacheKey, surface);
-    return surface;
-  });
+  let request;
+  if (isBinaryForecastManifest(manifest)) {
+    let file;
+    try {
+      file = forecastBinary.frameFile(manifest, leadHours);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const url = new URL(file.path, new URL(".", manifestUrl));
+    request = fetchArrayBuffer(url).then((buffer) => forecastBinary.parseSnapshot(manifest, leadHours, buffer));
+  } else if (isLegacyJsonForecastManifest(manifest)) {
+    const path = manifest.uiSurface.pathTemplate.replaceAll("{leadHours}", String(leadHours));
+    const url = new URL(path, new URL(".", manifestUrl));
+    request = fetchJson(url).then((surface) => validateLegacyJsonSurface(surface, manifest, leadHours));
+  } else {
+    return Promise.reject(new Error("Unsupported forecast surface format"));
+  }
   cache.set(cacheKey, request);
+  request.then(
+    (surface) => { if (cache.get(cacheKey) === request) cache.set(cacheKey, surface); },
+    () => { if (cache.get(cacheKey) === request) cache.delete(cacheKey); },
+  );
   return request;
 }
 
@@ -769,6 +805,12 @@ async function fetchJson(url, options) {
   const response = await fetch(url, options);
   if (!response.ok) throw new Error(`Could not load ${url.pathname}`);
   return response.json();
+}
+
+async function fetchArrayBuffer(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Could not load ${url.pathname}`);
+  return response.arrayBuffer();
 }
 
 function samplePipelineForecast(lon, lat, frameIndex) {
@@ -920,7 +962,7 @@ function activateUnavailablePipeline(source = {}) {
   label.textContent = "--";
   sampleDateLabel.textContent = "";
   timeLabel.textContent = source.message ?? "Published forecast assets could not be loaded.";
-  textureStatus.textContent = source.status ?? "Real pipeline mode requires numeric UI-surface JSON in ./forecasts/.";
+  textureStatus.textContent = source.status ?? "Real pipeline mode requires schema 2.0 Float32 UI-surface snapshots in ./forecasts/.";
 }
 
 function buildLayerControls(layers) {
@@ -997,7 +1039,7 @@ function applyPipelineFrame(index) {
     if (selectedCity) updateLocationForecast(selectedCity, forecastFrames[index]);
   }).catch(() => {
     textureStatus.textContent = activeWeatherSource === "graphcast-era5t"
-      ? `Google GraphCast Small — ERA5T frame t+${forecastFrames[index].leadHours}.json could not be loaded.`
+      ? `Google GraphCast Small — ERA5T frame t+${forecastFrames[index].leadHours}.bin could not be loaded.`
       : "Selected pipeline frame could not load.";
   });
 }
