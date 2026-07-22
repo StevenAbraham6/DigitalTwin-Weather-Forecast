@@ -51,11 +51,13 @@ server starts.
 
 ## Forecast pipeline connection
 
-`forecasts` is a symbolic link to the forecast assets currently published by
-`/Users/stevenabraham/Documents/Digital Twin Earth/forecasts`. That preserves
-the existing pipeline contract without changing the backend. The UI reads the
-same catalog, manifest, and `data/ui-surface/t+{leadHours}.json` grids for
-temperature, precipitation, pressure, and wind.
+`forecasts` is a symbolic link to the forecast engine's stable publish root at
+`/Users/stevenabraham/Documents/Digital Twin Google Pipeline/output/era5t-graphcast-small/published`.
+The engine creates versioned run directories and updates its `latest` manifest
+pointer after each publish. The UI checks that pointer every minute and whenever
+the page becomes visible, then reads the selected run's catalog, manifest, and
+`data/ui-surface/t+{leadHours}.json` grids for temperature, precipitation,
+pressure, and wind.
 
 ## Automatic city descent
 

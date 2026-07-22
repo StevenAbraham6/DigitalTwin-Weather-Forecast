@@ -256,7 +256,14 @@ const forecastLayers = {
 const pipelineLayers = new Map();
 const pipelineSurfaceCache = new Map();
 let pipelineManifest = null;
+let pipelineRefreshPromise = null;
 let activeWeatherSource = "synthetic";
+const graphcastSource = Object.freeze({
+  mode: "pipeline",
+  label: "Google GraphCast Small",
+  status: "",
+  cityNote: "Google GraphCast Small sample forecast data",
+});
 let requestedWeatherSource = localStorage.getItem("digital-twin-earth.weather-source") || "graphcast";
 // Migrate prior Auto, Real pipeline, and fixed-ERA5T selections to the single
 // latest GraphCast option rather than preserving a stale source choice.
@@ -298,6 +305,10 @@ let remoteCameraInputAt = 0;
 
 weatherSourceSelect.value = requestedWeatherSource;
 setWeatherSource(requestedWeatherSource);
+window.setInterval(refreshLatestPipeline, 60_000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshLatestPipeline();
+});
 
 playToggle.addEventListener("click", () => {
   setPlaying(!isPlaying);
@@ -669,12 +680,7 @@ async function setWeatherSource(mode) {
     // saved selection can never pin the UI to an older fixed source run.
     const pipeline = await loadPipelineForecast();
     if (request !== requestedWeatherSource) return;
-    activatePipeline(pipeline, mode === "graphcast" ? {
-      mode: "pipeline",
-      label: "Google GraphCast Small",
-      status: "",
-      cityNote: "Google GraphCast Small sample forecast data",
-    } : undefined);
+    activatePipeline(pipeline, mode === "graphcast" ? graphcastSource : undefined);
   } catch (error) {
     if (request !== requestedWeatherSource) return;
     console.warn("Forecast pipeline could not load", error);
@@ -702,13 +708,29 @@ async function loadPipelineForecast() {
   return { manifest, model, manifestUrl, surface };
 }
 
+async function refreshLatestPipeline() {
+  if (requestedWeatherSource !== "graphcast" || document.hidden || pipelineRefreshPromise) return;
+  const request = loadPipelineForecast();
+  pipelineRefreshPromise = request;
+  try {
+    const pipeline = await request;
+    if (requestedWeatherSource !== "graphcast" || pipeline.manifest.runId === pipelineManifest?.runId) return;
+    activatePipeline(pipeline, graphcastSource);
+    publishControlState();
+  } catch (error) {
+    console.warn("Could not check for a newer forecast run", error);
+  } finally {
+    if (pipelineRefreshPromise === request) pipelineRefreshPromise = null;
+  }
+}
+
 async function loadForecastCatalog(catalogUrl = new URL("./forecasts/catalog.json", window.location.href)) {
-  return { catalog: await fetchJson(catalogUrl), catalogUrl };
+  return { catalog: await fetchJson(catalogUrl, { cache: "no-store" }), catalogUrl };
 }
 
 async function loadForecastManifest(model, catalogUrl) {
   const latestUrl = new URL(model.latestManifestPath, catalogUrl);
-  let manifest = await fetchJson(latestUrl);
+  let manifest = await fetchJson(latestUrl, { cache: "no-store" });
   let manifestUrl = latestUrl;
   if (manifest.manifestPath) {
     manifestUrl = new URL(manifest.manifestPath, latestUrl);
@@ -722,29 +744,35 @@ function resolveManifestAssetPath(manifestUrl, pathTemplate, leadHours) {
   return new URL(path, new URL(".", manifestUrl));
 }
 
+function pipelineSurfaceCacheKey(manifest, frameIndex) {
+  const leadHours = manifest?.leadTimesHours?.[frameIndex];
+  return `${manifest?.runId ?? manifest?.initializationTime ?? "unknown"}:${leadHours ?? frameIndex}`;
+}
+
 function loadPipelineSurfaceFrame(frameIndex, manifest = pipelineManifest, manifestUrl = pipelineManifest?._url, cache = pipelineSurfaceCache) {
-  const cached = cache.get(frameIndex);
+  const cacheKey = pipelineSurfaceCacheKey(manifest, frameIndex);
+  const cached = cache.get(cacheKey);
   if (cached) return cached instanceof Promise ? cached : Promise.resolve(cached);
   const leadHours = manifest?.leadTimesHours?.[frameIndex];
   if (leadHours === undefined) return Promise.reject(new Error("Unknown forecast lead time"));
   const url = resolveManifestAssetPath(manifestUrl, manifest.uiSurface.pathTemplate, leadHours);
   const request = fetchJson(url).then((surface) => {
     if (!surface.grid || !surface.fields) throw new Error("UI surface is incomplete");
-    cache.set(frameIndex, surface);
+    cache.set(cacheKey, surface);
     return surface;
   });
-  cache.set(frameIndex, request);
+  cache.set(cacheKey, request);
   return request;
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url);
+async function fetchJson(url, options) {
+  const response = await fetch(url, options);
   if (!response.ok) throw new Error(`Could not load ${url.pathname}`);
   return response.json();
 }
 
 function samplePipelineForecast(lon, lat, frameIndex) {
-  const surface = pipelineSurfaceCache.get(frameIndex);
+  const surface = pipelineSurfaceCache.get(pipelineSurfaceCacheKey(pipelineManifest, frameIndex));
   if (!surface || surface instanceof Promise) return { temperature: null, rain: null, pressure: null, windU: null, windV: null };
   return {
     temperature: samplePipelineField(surface, "temperature", lon, lat),
@@ -776,7 +804,7 @@ function samplePipelineField(surface, fieldName, lon, lat) {
 }
 
 function makePipelineForecastFrame(frameIndex) {
-  const surface = pipelineSurfaceCache.get(frameIndex);
+  const surface = pipelineSurfaceCache.get(pipelineSurfaceCacheKey(pipelineManifest, frameIndex));
   if (!surface || surface instanceof Promise) return null;
   return Object.fromEntries(Object.keys(surface.fields).map((field) => [field, makePipelineScalarTexture(surface, field)]));
 }
@@ -819,8 +847,8 @@ function activatePipeline({ manifest, model, manifestUrl, surface, surfaces }, s
   pipelineManifest._url = manifestUrl;
   pipelineManifest._source = source;
   pipelineSurfaceCache.clear();
-  if (surfaces) surfaces.forEach((frame, index) => pipelineSurfaceCache.set(index, frame));
-  else pipelineSurfaceCache.set(0, surface);
+  if (surfaces) surfaces.forEach((frame, index) => pipelineSurfaceCache.set(pipelineSurfaceCacheKey(manifest, index), frame));
+  else pipelineSurfaceCache.set(pipelineSurfaceCacheKey(manifest, 0), surface);
   forecastFrames = manifest.leadTimesHours.map((leadHours, index) => ({
     index,
     leadHours,

@@ -204,6 +204,15 @@ function safeFilePath(urlPath) {
   return filePath === projectRoot || filePath.startsWith(`${projectRoot}${path.sep}`) ? filePath : null;
 }
 
+function cacheControl(filePath) {
+  const relativePath = path.relative(projectRoot, filePath).split(path.sep).join("/");
+  const isMutableForecastIndex = relativePath === "forecasts/catalog.json"
+    || /(^|\/)latest\/manifest\.json$/.test(relativePath);
+  return filePath.endsWith(".html") || isMutableForecastIndex
+    ? "no-cache"
+    : "public, max-age=300";
+}
+
 const server = http.createServer((request, response) => {
   if (!request.url || !["GET", "HEAD"].includes(request.method)) {
     response.writeHead(405).end("Method not allowed");
@@ -221,7 +230,7 @@ const server = http.createServer((request, response) => {
     }
     const headers = {
       "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream",
-      "Cache-Control": filePath.endsWith(".html") ? "no-cache" : "public, max-age=300",
+      "Cache-Control": cacheControl(filePath),
       "X-Content-Type-Options": "nosniff",
     };
     response.writeHead(200, headers);
