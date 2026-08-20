@@ -2,9 +2,14 @@
 """Run one +6h GraphCast Small prediction from prepared ERA5T data."""
 from __future__ import annotations
 
+import time
+
+PROCESS_STARTED = time.monotonic()
+
 import argparse
 import dataclasses
 import functools
+import json
 import sys
 from pathlib import Path
 
@@ -13,6 +18,41 @@ import jax
 import numpy as np
 import xarray as xr
 from google.cloud import storage
+
+EVENT_PREFIX = "@@PIPELINE_EVENT@@"
+
+
+def emit(payload: dict[str, object]) -> None:
+    print(EVENT_PREFIX + json.dumps(payload, separators=(",", ":")), flush=True)
+
+
+def emit_timing(name: str, label: str, started: float) -> None:
+    duration_ms = round((time.monotonic() - started) * 1000)
+    emit(
+        {
+            "type": "inference_timing",
+            "name": name,
+            "label": label,
+            "durationMs": duration_ms,
+        }
+    )
+    print(f"Inference timing · {label}: {duration_ms / 1000:.3f} s", flush=True)
+
+
+def synchronize(dataset: xr.Dataset) -> None:
+    """Wait until every forecast field has completed on the selected device."""
+    for variable in dataset.data_vars.values():
+        wait = getattr(variable.data, "block_until_ready", None)
+        if wait is not None:
+            wait()
+
+
+def transfer_to_host(dataset: xr.Dataset) -> xr.Dataset:
+    """Materialize device-backed fields as NumPy arrays before serialization."""
+    materialized = dataset.copy()
+    for name in materialized.data_vars:
+        materialized[name].data = np.asarray(materialized[name].data)
+    return materialized
 
 
 def main() -> None:
@@ -36,7 +76,14 @@ def main() -> None:
         )
     devices = ", ".join(getattr(device, "device_kind", str(device)) for device in jax.devices())
     print(f"JAX inference backend: {actual_backend.upper()} · {devices}", flush=True)
+    emit({"type": "metadata", "inferenceBackend": actual_backend, "inferenceDevice": devices})
+    emit_timing("processSetup", "Process and device setup", PROCESS_STARTED)
+
+    input_started = time.monotonic()
     state = xr.load_dataset(args.input)
+    emit_timing("inputLoad", "Load prepared input", input_started)
+
+    preparation_started = time.monotonic()
     target_times = state.time.values[-1] + np.arange(1, args.steps + 1) * np.timedelta64(6, "h")
     target = xr.concat([state.isel(time=-1).expand_dims(time=[time]) for time in target_times], dim="time")
     target = target.assign_coords(datetime=("time", target_times))
@@ -45,7 +92,9 @@ def main() -> None:
     lead_times = np.concatenate((np.array([np.timedelta64(-6, "h"), np.timedelta64(0, "h")]), np.arange(1, args.steps + 1) * np.timedelta64(6, "h")))
     dataset = dataset.assign_coords(time=lead_times)
     dataset = dataset.assign_coords(datetime=(("batch", "time"), datetimes[None, :]))
+    emit_timing("targetPreparation", "Prepare forecast tensors", preparation_started)
 
+    checkpoint_started = time.monotonic()
     bucket = storage.Client.create_anonymous_client().bucket("dm_graphcast")
     prefix = "graphcast/"
     name = "GraphCast_small - ERA5 1979-2015 - resolution 1.0 - pressure levels 13 - mesh 2to5 - precipitation input and output.npz"
@@ -55,9 +104,14 @@ def main() -> None:
     for stat in ("diffs_stddev_by_level", "mean_by_level", "stddev_by_level"):
         with bucket.blob(prefix + f"stats/{stat}.nc").open("rb") as file:
             stats[stat] = xr.load_dataset(file).compute()
+    emit_timing("checkpointLoad", "Load checkpoint and statistics", checkpoint_started)
+
+    extraction_started = time.monotonic()
     inputs, targets, forcings = data_utils.extract_inputs_targets_forcings(dataset, target_lead_times=slice("6h", f"{args.steps * 6}h"), **dataclasses.asdict(loaded.task_config))
     for variable in ("geopotential_at_surface", "land_sea_mask"):
         inputs[variable] = inputs[variable].isel(time=0, drop=True)
+    target_template = targets * np.nan
+    emit_timing("inputExtraction", "Extract model inputs and forcings", extraction_started)
 
     @hk.transform_with_state
     def forward(inputs: xr.Dataset, targets_template: xr.Dataset, forcings: xr.Dataset) -> xr.Dataset:
@@ -68,7 +122,20 @@ def main() -> None:
         return predictor(inputs, targets_template=targets_template, forcings=forcings)
 
     run = jax.jit(functools.partial(forward.apply, loaded.params, {}))
-    prediction, _ = run(jax.random.PRNGKey(0), inputs, targets * np.nan, forcings)
+    random_key = jax.random.PRNGKey(0)
+
+    compilation_started = time.monotonic()
+    compiled_run = run.lower(random_key, inputs, target_template, forcings).compile()
+    emit_timing("jaxCompilation", "JAX lower and compile", compilation_started)
+
+    rollout_started = time.monotonic()
+    prediction, _ = compiled_run(random_key, inputs, target_template, forcings)
+    synchronize(prediction)
+    emit_timing("modelRollout", f"GraphCast rollout ({args.steps} steps)", rollout_started)
+
+    transfer_started = time.monotonic()
+    prediction = transfer_to_host(prediction)
+    emit_timing("deviceToHost", "Transfer forecast to host", transfer_started)
     prediction.attrs.update(
         {
             "input_source": state.attrs.get("input_source", "ERA5T prepared analysis"),
@@ -78,7 +145,11 @@ def main() -> None:
         }
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
+
+    write_started = time.monotonic()
     prediction.to_netcdf(args.output)
+    emit_timing("netcdfWrite", "Write native NetCDF", write_started)
+    emit_timing("runnerTotal", "Inference runner total", PROCESS_STARTED)
     print(args.output)
 
 

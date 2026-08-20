@@ -14,7 +14,7 @@ const PERIOD_MS = {
 
 function defaultState() {
   return {
-    version: 4,
+    version: 5,
     schedule: {
       enabled: false,
       runsPerPeriod: 1,
@@ -465,6 +465,9 @@ class AdminService {
       downloadDurationMs: null,
       preparationDurationMs: null,
       inferenceDurationMs: null,
+      inferenceTimings: [],
+      inferenceBackend: null,
+      inferenceDevice: null,
       publishDurationMs: null,
       snapshotBytes: null,
       snapshotCount: null,
@@ -544,6 +547,24 @@ class AdminService {
       if (event.runId) run.publishedRunId = event.runId;
       if (event.runDir) run.runDir = event.runDir;
       if (event.baseDataPath) run.baseDataPath = event.baseDataPath;
+      if (event.inferenceBackend) run.inferenceBackend = String(event.inferenceBackend).slice(0, 30);
+      if (event.inferenceDevice) run.inferenceDevice = String(event.inferenceDevice).slice(0, 200);
+    } else if (event.type === "inference_timing") {
+      const name = typeof event.name === "string" && /^[A-Za-z][A-Za-z0-9]{0,49}$/.test(event.name)
+        ? event.name
+        : null;
+      const duration = safeNumber(event.durationMs);
+      if (name && duration !== null) {
+        if (!Array.isArray(run.inferenceTimings)) run.inferenceTimings = [];
+        const timing = {
+          name,
+          label: typeof event.label === "string" ? event.label.slice(0, 100) : name,
+          durationMs: duration,
+        };
+        const existing = run.inferenceTimings.findIndex((entry) => entry.name === name);
+        if (existing === -1) run.inferenceTimings.push(timing);
+        else run.inferenceTimings[existing] = timing;
+      }
     }
     this._save();
   }

@@ -140,6 +140,27 @@ async function main() {
     fs.writeFileSync(fakePython, "");
     const service = new AdminService({ projectRoot: emptyProject, publishRoot: path.join(emptyProject, "forecasts") });
     try {
+      const timingRun = { inferenceTimings: [] };
+      service._applyEvent(timingRun, {
+        type: "inference_timing",
+        name: "jaxCompilation",
+        label: "JAX lower and compile",
+        durationMs: 1234,
+      });
+      assert.deepEqual(timingRun.inferenceTimings, [{
+        name: "jaxCompilation",
+        label: "JAX lower and compile",
+        durationMs: 1234,
+      }]);
+      service._applyEvent(timingRun, {
+        type: "inference_timing",
+        name: "jaxCompilation",
+        label: "JAX lower and compile",
+        durationMs: 1500,
+      });
+      assert.equal(timingRun.inferenceTimings.length, 1);
+      assert.equal(timingRun.inferenceTimings[0].durationMs, 1500);
+
       assert.throws(
         () => service.startRun("manual", { mode: "inference", steps: 8 }),
         /requires base data from a previous full pipeline run/,

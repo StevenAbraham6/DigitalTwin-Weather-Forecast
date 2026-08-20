@@ -251,11 +251,20 @@ function showRun(run) {
     run.mode === "inference" ? "Download Reused" : `Download ${formatDuration(run.downloadDurationMs)}`,
     run.mode === "inference" ? "Preparation Reused" : `Preparation ${formatDuration(run.preparationDurationMs)}`,
     `Inference ${formatDuration(run.inferenceDurationMs)}`,
+    run.inferenceBackend
+      ? `Backend ${run.inferenceBackend.toUpperCase()}${run.inferenceDevice ? ` · ${run.inferenceDevice}` : ""}`
+      : null,
     `Publish ${formatDuration(run.publishDurationMs)}`,
     `${formatBytes(run.snapshotBytes)} snapshots`,
     `${formatBytes(run.artifactBytes)} total artifacts`,
   ];
-  elements.dialogSummary.replaceChildren(...items.map((text) => {
+  for (const timing of run.inferenceTimings || []) {
+    if (timing.name === "runnerTotal") continue;
+    items.push(`Inference · ${timing.label} ${formatDuration(timing.durationMs)}`);
+  }
+  const runnerTotal = (run.inferenceTimings || []).find((timing) => timing.name === "runnerTotal");
+  if (runnerTotal) items.push(`Inference runner total ${formatDuration(runnerTotal.durationMs)}`);
+  elements.dialogSummary.replaceChildren(...items.filter(Boolean).map((text) => {
     const span = document.createElement("span"); span.textContent = text; return span;
   }));
   elements.dialogLog.textContent = `${run.error ? `ERROR: ${run.error}\n\n` : ""}${logText(run.logs)}`;
