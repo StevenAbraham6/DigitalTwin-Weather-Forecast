@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#071210" />
+  <title>Pipeline Control — Digital Twin Earth</title>
+  <link rel="stylesheet" href="/admin/admin.css?v=4" />
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"></div>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <a class="back-link" href="/">← Digital Twin Earth</a>
+        <h1>Pipeline control</h1>
+        <p class="lede">Operate and observe the ERA5T → Google GraphCast Small forecast pipeline.</p>
+      </div>
+      <div id="pipeline-status" class="status-pill"><span></span> Checking pipeline</div>
+    </header>
+
+    <section class="metric-grid" aria-label="Pipeline summary">
+      <article class="metric-card accent">
+        <span class="metric-label">Snapshot storage</span>
+        <strong id="snapshot-storage">—</strong>
+        <small id="snapshot-detail">Scanning published snapshots…</small>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Published runs</span>
+        <strong id="published-runs">—</strong>
+        <small id="published-total">— total artifacts</small>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Last execution</span>
+        <strong id="last-run">—</strong>
+        <small id="last-run-detail">No execution history yet</small>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Next scheduled run</span>
+        <strong id="next-run">Off</strong>
+        <small id="next-run-detail">No recurring schedule</small>
+      </article>
+    </section>
+
+    <section class="panel execution-panel">
+      <div class="execution-settings">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">Pipeline execution</span>
+            <h2>Execution settings</h2>
+          </div>
+        </div>
+        <div class="execution-fields">
+          <label for="run-name">Execution name
+            <input id="run-name" type="text" maxlength="70" value="Forecast run" autocomplete="off" />
+          </label>
+          <label for="run-mode">Run type
+            <select id="run-mode" aria-describedby="reusable-data">
+              <option value="full">Full pipeline</option>
+              <option value="inference">Inference only</option>
+            </select>
+          </label>
+          <label for="forecast-steps">Forecast frames
+            <select id="forecast-steps">
+              <option value="4">4 · 24 hours</option>
+              <option value="8" selected>8 · 48 hours</option>
+              <option value="12">12 · 72 hours</option>
+              <option value="20">20 · 5 days</option>
+              <option value="40">40 · 10 days</option>
+            </select>
+          </label>
+        </div>
+        <p class="execution-description">A full pipeline downloads the latest ERA5T state. Inference only reuses the most recent downloaded and prepared base data. Both paths validate and publish a new forecast.</p>
+        <p id="reusable-data" class="base-data-status">Checking for reusable base data…</p>
+      </div>
+
+      <div class="execution-toolbar">
+        <div class="run-now-control">
+          <button id="run-now" class="primary-button" type="button" disabled>
+            <span class="button-icon">▶</span>
+            <span>Run now</span>
+          </button>
+        </div>
+
+        <div class="schedule-inline">
+          <div class="schedule-toggle">
+            <span class="eyebrow">Schedule</span>
+            <label class="switch">
+              <input id="schedule-enabled" type="checkbox" />
+              <span aria-hidden="true"></span>
+              <b>Enabled</b>
+            </label>
+          </div>
+          <div class="schedule-fields">
+            <label>Runs
+              <input id="runs-per-period" type="number" min="1" max="24" value="1" />
+            </label>
+            <label>Per
+              <select id="schedule-period">
+                <option value="day">day</option>
+                <option value="week">week</option>
+              </select>
+            </label>
+            <button id="save-schedule" class="secondary-button" type="button">Save schedule</button>
+          </div>
+        </div>
+      </div>
+      <div class="execution-feedback">
+        <p id="run-message" class="form-message" role="status"></p>
+        <p id="schedule-message" class="form-message" role="status"></p>
+      </div>
+      <p class="hint schedule-hint">The schedule uses these same execution settings and adds a timestamp to each run name.</p>
+    </section>
+
+    <section id="active-run" class="panel active-panel" hidden>
+      <div class="panel-heading">
+        <div>
+          <span class="eyebrow">Live execution</span>
+          <h2 id="active-title">Pipeline running</h2>
+        </div>
+        <strong id="active-elapsed" class="elapsed">00:00</strong>
+      </div>
+      <div class="progress-track"><span id="progress-bar"></span></div>
+      <div id="stage-list" class="stage-list"></div>
+      <pre id="live-log" class="log-view" aria-label="Live pipeline log"></pre>
+    </section>
+
+    <section class="panel history-panel">
+      <div class="panel-heading">
+        <div>
+          <span class="eyebrow">Audit trail</span>
+          <h2>Execution history</h2>
+        </div>
+        <button id="refresh" class="quiet-button" type="button">Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Status</th>
+              <th>Started</th>
+              <th>Total</th>
+              <th>Download</th>
+              <th>Inference</th>
+              <th>Snapshots</th>
+              <th>Run type</th>
+              <th><span class="sr-only">Logs</span></th>
+            </tr>
+          </thead>
+          <tbody id="run-history"></tbody>
+        </table>
+        <div id="empty-history" class="empty-state">No pipeline executions have been recorded by this server yet.</div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="log-dialog">
+    <div class="dialog-heading">
+      <div>
+        <span class="eyebrow">Execution details</span>
+        <h2 id="dialog-title">Pipeline log</h2>
+      </div>
+      <button id="close-dialog" class="quiet-button" type="button">Close</button>
+    </div>
+    <div id="dialog-summary" class="dialog-summary"></div>
+    <pre id="dialog-log" class="log-view"></pre>
+  </dialog>
+
+  <script src="/admin/admin.js?v=4"></script>
+</body>
+</html>

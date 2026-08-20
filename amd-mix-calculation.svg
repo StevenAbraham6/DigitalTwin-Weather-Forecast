@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="576" viewBox="0 0 1024 576" role="img" aria-labelledby="title desc">
+  <title id="title">AMD mix calculation</title>
+  <desc id="desc">AMD bookings of 226.2 million dollars divided by total bookings of 887.6 million dollars equals 25.5 percent AMD mix.</desc>
+  <rect width="1024" height="576" fill="#081525"/>
+  <rect x="40" y="30" width="944" height="516" rx="28" fill="#10243A" stroke="#294462" stroke-width="2"/>
+  <text x="90" y="95" fill="#9EB6CE" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="2">BOOKINGS MIX</text>
+  <text x="90" y="145" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">AMD mix of total bookings</text>
+  <line x1="90" y1="175" x2="934" y2="175" stroke="#294462" stroke-width="2"/>
+  <rect x="90" y="215" width="210" height="120" rx="20" fill="#173756"/>
+  <text x="118" y="260" fill="#9EB6CE" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">AMD BOOKINGS</text>
+  <text x="118" y="307" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="39" font-weight="700">$226.2M</text>
+  <text x="321" y="285" fill="#9EB6CE" font-family="Arial, Helvetica, sans-serif" font-size="43">÷</text>
+  <rect x="370" y="215" width="220" height="120" rx="20" fill="#173756"/>
+  <text x="398" y="260" fill="#9EB6CE" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">TOTAL BOOKINGS</text>
+  <text x="398" y="307" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="39" font-weight="700">$887.6M</text>
+  <text x="611" y="285" fill="#9EB6CE" font-family="Arial, Helvetica, sans-serif" font-size="43">=</text>
+  <rect x="660" y="205" width="250" height="140" rx="22" fill="#19B97D"/>
+  <text x="690" y="257" fill="#063724" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">AMD MIX</text>
+  <text x="690" y="315" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="700">25.5%</text>
+  <text x="90" y="402" fill="#C9D7E5" font-family="Arial, Helvetica, sans-serif" font-size="29">$226.2M ÷ $887.6M = 0.2548</text>
+  <rect x="90" y="432" width="820" height="32" rx="16" fill="#294462"/>
+  <rect x="90" y="432" width="209" height="32" rx="16" fill="#19B97D"/>
+  <text x="90" y="510" fill="#9EB6CE" font-family="Arial, Helvetica, sans-serif" font-size="22">AMD = 25.5%  •  Intel + other bookings = 74.5%</text>
+</svg>

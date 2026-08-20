@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forecast-engine"
+version = "0.1.0"
+description = "Provider-qualified forecast publishing pipeline for Digital Twin Earth"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  # WeatherNext's current GraphCast demo is not compatible with the 2026
+  # Xarray/Pandas time-coordinate APIs. Keep a tested scientific stack.
+  "numpy>=1.26,<2", "pandas>=2.1,<2.3", "xarray>=2024.1,<2025.1", "netCDF4>=1.6",
+  "pydantic>=2.6", "typer>=0.12", "PyYAML>=6", "platformdirs>=4",
+]
+
+[project.optional-dependencies]
+# The upstream notebook imports these at module load, including visualisation
+# packages, even though this runner only retains NetCDF output.
+graphcast = [
+  "jupyter>=1.0", "nbclient>=0.10", "nbformat>=5.10",
+  "shapely>=2.0", "cartopy>=0.22", "google-cloud-storage>=2.14",
+  "ipywidgets>=8", "matplotlib>=3.8",
+  "jax>=0.4.25,<0.5", "jaxlib>=0.4.25,<0.5", "chex>=0.1.86,<0.1.90", "zarr<3",
+  # Runtime imports used by the pinned GraphCast source checkout. Installing
+  # WeatherNext itself is intentionally avoided because its latest release now
+  # requires Python 3.12 while this tested pipeline runs on Python 3.11.
+  "dm-haiku==0.0.16", "dm-tree>=0.1.8", "jraph>=0.0.6.dev0", "trimesh>=4,<5",
+  "rtree>=1.4,<2",
+]
+# Optional dependencies for the isolated ECMWF HRES import/compatibility test.
+# They are intentionally not required by the existing sample-data pipeline.
+hres = ["ecmwf-opendata>=0.3", "cfgrib>=0.9.11", "eccodes>=1.7"]
+era5 = ["cdsapi>=0.7"]
+dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
+
+[project.scripts]
+forecast-engine = "forecast_engine.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+forecast_engine = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+packages = ["forecast_engine"]

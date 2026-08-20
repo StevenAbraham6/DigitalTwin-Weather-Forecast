@@ -1,0 +1,5 @@
+model_id: google-graphcast-small
+provider: Google DeepMind
+source_adapter: sample
+cache_dir: ~/.cache/forecast-engine
+publish_dir: output/forecasts

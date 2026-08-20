@@ -1,8 +1,7 @@
 # Digital Twin Earth 2.0
 
-This frontend renders the Earth and visualizes the numeric grids published by
-the separate **Digital Twin Google Pipeline**. It does not run or modify the
-forecast model.
+This project contains the Digital Twin Earth UI, controller, administration
+page, and the integrated ERA5T → Google GraphCast Small forecast pipeline.
 
 Install the local controller server once:
 
@@ -49,12 +48,38 @@ PORT=8090 npm start
 The terminal prints the corresponding local-network controller URL after the
 server starts.
 
+## Pipeline administration
+
+Open `http://localhost:8080/admin/` to run the pipeline, configure a recurring
+schedule, review execution logs and stage timings, and inspect retained
+snapshot storage. Schedules are persisted under `pipeline/admin-data/` and
+resume whenever the Node server is running. Pipeline executions are serialized
+so a scheduled run cannot overlap an active manual run.
+
+The shared execution form controls the name, full or inference-only mode, and
+forecast-frame count for both **Run now** and recurring schedules. A full run
+downloads and prepares the latest base data; inference-only reuses the most
+recent prepared ERA5T base state and skips those stages. Inference-only remains
+unavailable until reusable base data exists. Schedules additionally store their
+frequency and enabled state, and append a timestamp to the shared name.
+
+Install the project-local Python environment once before the first run:
+
+```bash
+npm run pipeline:setup
+```
+
+ERA5T retrieval requires a valid CDS API configuration and accepted dataset
+licences. The first admin run downloads the tested upstream source revision if
+needed; model source and downloaded artifacts are cached outside the source
+tree under the standard forecast-engine user cache.
+
 ## Forecast pipeline connection
 
-`forecasts` is a symbolic link to the forecast engine's stable publish root at
-`/Users/stevenabraham/Documents/Digital Twin Google Pipeline/output/era5t-graphcast-small/published`.
-The engine creates versioned run directories and updates its `latest` manifest
-pointer after each publish. The UI checks that pointer every minute and whenever
+The server maps `/forecasts/` directly to the integrated engine's stable publish
+root at `pipeline/output/era5t-graphcast-small/published`; no cross-project
+symbolic link is used. The engine creates versioned run directories and updates
+its `latest` manifest pointer only after validation. The UI checks that pointer every minute and whenever
 the page becomes visible, then reads the selected run's catalog, manifest, and
 schema 2.0 `data/ui-surface/t+{leadHours}.bin` snapshots for temperature,
 precipitation, pressure, and wind. Each snapshot contains every available field

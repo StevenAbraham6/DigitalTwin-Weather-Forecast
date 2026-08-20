@@ -6,12 +6,15 @@ const path = require("node:path");
 const QRCode = require("qrcode");
 const { WebSocketServer, WebSocket } = require("ws");
 const { VERSION, ROLES } = require("../shared/protocol.js");
+const { AdminService } = require("./admin-service.js");
 
 const projectRoot = path.resolve(__dirname, "..");
 const port = Number(process.env.PORT) || 8080;
 const host = process.env.HOST || "0.0.0.0";
 const maxMessageBytes = 32 * 1024;
 const sessions = new Map();
+const forecastPublishRoot = path.join(projectRoot, "pipeline", "output", "era5t-graphcast-small", "published");
+const adminService = new AdminService({ projectRoot, publishRoot: forecastPublishRoot });
 
 const mimeTypes = {
   ".bin": "application/octet-stream",
@@ -200,26 +203,53 @@ function safeFilePath(urlPath) {
   }
   if (pathname === "/") pathname = "/index.html";
   if (pathname === "/controller") pathname = "/controller/";
+  if (pathname === "/admin") pathname = "/admin/";
   if (pathname.endsWith("/")) pathname += "index.html";
+  if (pathname === "/forecasts" || pathname.startsWith("/forecasts/")) {
+    const forecastPath = path.resolve(forecastPublishRoot, `.${pathname.slice("/forecasts".length)}`);
+    return forecastPath === forecastPublishRoot || forecastPath.startsWith(`${forecastPublishRoot}${path.sep}`)
+      ? forecastPath
+      : null;
+  }
   const filePath = path.resolve(projectRoot, `.${pathname}`);
   return filePath === projectRoot || filePath.startsWith(`${projectRoot}${path.sep}`) ? filePath : null;
 }
 
 function cacheControl(filePath) {
   const relativePath = path.relative(projectRoot, filePath).split(path.sep).join("/");
-  const isMutableForecastIndex = relativePath === "forecasts/catalog.json"
-    || /(^|\/)latest\/manifest\.json$/.test(relativePath);
-  return filePath.endsWith(".html") || isMutableForecastIndex
+  const forecastRelativePath = path.relative(forecastPublishRoot, filePath).split(path.sep).join("/");
+  const isMutableForecastIndex = forecastRelativePath === "catalog.json"
+    || /(^|\/)latest\/manifest\.json$/.test(forecastRelativePath);
+  const isAdminAsset = relativePath === "admin" || relativePath.startsWith("admin/");
+  return filePath.endsWith(".html") || isMutableForecastIndex || isAdminAsset
     ? "no-cache"
     : "public, max-age=300";
 }
 
-const server = http.createServer((request, response) => {
-  if (!request.url || !["GET", "HEAD"].includes(request.method)) {
+const server = http.createServer(async (request, response) => {
+  if (!request.url) {
+    response.writeHead(400).end("Bad request");
+    return;
+  }
+  let pathname;
+  try {
+    pathname = new URL(request.url, "http://local").pathname;
+  } catch {
+    response.writeHead(400).end("Bad request");
+    return;
+  }
+  try {
+    if (pathname.startsWith("/api/admin/") && await adminService.handleRequest(request, response, pathname)) return;
+  } catch (error) {
+    console.error(`Admin API error: ${error.message}`);
+    if (!response.headersSent) response.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Admin request failed." }));
+    return;
+  }
+  if (!["GET", "HEAD"].includes(request.method)) {
     response.writeHead(405).end("Method not allowed");
     return;
   }
-  const filePath = safeFilePath(request.url);
+  const filePath = safeFilePath(pathname);
   if (!filePath) {
     response.writeHead(400).end("Bad request");
     return;
@@ -279,6 +309,7 @@ server.on("error", (error) => {
 
 function shutdown() {
   clearInterval(heartbeat);
+  adminService.close();
   websocketServer.clients.forEach((socket) => socket.terminate());
   websocketServer.close(() => server.close(() => process.exit(0)));
   setTimeout(() => process.exit(0), 1000).unref();
