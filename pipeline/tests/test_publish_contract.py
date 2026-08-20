@@ -8,9 +8,9 @@ import pytest
 import xarray as xr
 
 import forecast_engine.publish.publisher as publisher_module
+from forecast_engine.publish import prune_published_runs
 from forecast_engine.publish.publisher import publish
 from forecast_engine.publish.validate import validate_run
-
 
 INITIALIZATION = datetime(2026, 7, 10, tzinfo=UTC)
 FIELDS = ["temperature", "rain", "pressure", "windU", "windV"]
@@ -320,6 +320,33 @@ def test_incomplete_publication_does_not_update_latest_pointer(
     failed_root = publish_dir / "models" / "google-graphcast-small" / "runs" / "failed-run"
     assert (failed_root / "data" / "ui-surface" / "t+0.bin").is_file()
     assert not (failed_root / "manifest.json").exists()
+
+
+def test_prune_published_runs_retains_only_selected_run(tmp_path: Path) -> None:
+    publish_dir = tmp_path / "forecasts"
+    runs = publish_dir / "models" / "google-graphcast-small" / "runs"
+    retained = runs / "new-run"
+    superseded = runs / "old-run"
+    retained.mkdir(parents=True)
+    superseded.mkdir()
+    (retained / "manifest.json").write_text("{}")
+    (superseded / "manifest.json").write_text("{}")
+
+    prune_published_runs(publish_dir, keep="new-run")
+
+    assert retained.is_dir()
+    assert not superseded.exists()
+
+
+def test_prune_published_runs_refuses_to_delete_without_retained_run(tmp_path: Path) -> None:
+    publish_dir = tmp_path / "forecasts"
+    old_run = publish_dir / "models" / "google-graphcast-small" / "runs" / "old-run"
+    old_run.mkdir(parents=True)
+
+    with pytest.raises(FileNotFoundError, match="retained run does not exist"):
+        prune_published_runs(publish_dir, keep="missing-run")
+
+    assert old_run.is_dir()
 
 
 def test_publish_requires_initialization_state(tmp_path: Path) -> None:

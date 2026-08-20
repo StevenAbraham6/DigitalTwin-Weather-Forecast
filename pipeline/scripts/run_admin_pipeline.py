@@ -9,8 +9,7 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 EVENT_PREFIX = "@@PIPELINE_EVENT@@"
@@ -95,7 +94,7 @@ def main() -> None:
         prepare_graphcast_small,
         retrieve_pair,
     )
-    from forecast_engine.publish import publish, validate_run
+    from forecast_engine.publish import prune_published_runs, publish, validate_run
 
     if args.mode == "full":
         with stage("download"):
@@ -169,6 +168,7 @@ def main() -> None:
             initialization_state=prepared,
         )
         validate_run(run_dir)
+        prune_published_runs(args.publish_dir, keep=run_dir.name)
 
     emit(
         {
