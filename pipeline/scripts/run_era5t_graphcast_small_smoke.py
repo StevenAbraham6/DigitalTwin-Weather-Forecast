@@ -21,12 +21,21 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=1, help="Number of six-hour forecast intervals.")
+    parser.add_argument("--compute-device", choices=("auto", "cpu", "gpu"), default="auto")
     args = parser.parse_args()
     sys.path.insert(0, str(args.upstream))
     from graphcast import autoregressive, casting, checkpoint, data_utils, graphcast, normalization
 
     if args.steps < 1:
         raise ValueError("--steps must be positive")
+    actual_backend = jax.default_backend()
+    if args.compute_device != "auto" and actual_backend != args.compute_device:
+        raise RuntimeError(
+            f"Requested {args.compute_device.upper()} inference but JAX selected "
+            f"{actual_backend.upper()}. Check the installed JAX backend."
+        )
+    devices = ", ".join(getattr(device, "device_kind", str(device)) for device in jax.devices())
+    print(f"JAX inference backend: {actual_backend.upper()} · {devices}", flush=True)
     state = xr.load_dataset(args.input)
     target_times = state.time.values[-1] + np.arange(1, args.steps + 1) * np.timedelta64(6, "h")
     target = xr.concat([state.isel(time=-1).expand_dims(time=[time]) for time in target_times], dim="time")

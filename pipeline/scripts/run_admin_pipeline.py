@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -70,6 +71,7 @@ def ensure_upstream(upstream: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("full", "inference"), default="full")
+    parser.add_argument("--compute-device", choices=("cpu", "gpu"), default="cpu")
     parser.add_argument("--execution-id", required=True)
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--work-dir", type=Path, required=True)
@@ -138,6 +140,8 @@ def main() -> None:
 
     native = prepared.parent / f"forecast-{args.steps}-intervals.nc"
     inference_runner = Path(__file__).with_name("run_era5t_graphcast_small_smoke.py")
+    inference_environment = os.environ.copy()
+    inference_environment["JAX_PLATFORMS"] = "cuda" if args.compute_device == "gpu" else "cpu"
     with stage("inference"):
         subprocess.run(
             [
@@ -145,6 +149,8 @@ def main() -> None:
                 str(inference_runner),
                 "--steps",
                 str(args.steps),
+                "--compute-device",
+                args.compute_device,
                 "--input",
                 str(prepared),
                 "--output",
@@ -153,6 +159,7 @@ def main() -> None:
                 str(args.upstream),
             ],
             check=True,
+            env=inference_environment,
         )
 
     run_id = (

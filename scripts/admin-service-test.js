@@ -10,6 +10,7 @@ const {
   findReusableBaseData,
   nextScheduledTime,
   scheduledRunName,
+  validateComputeDevice,
   validateForecastSteps,
   validateRunMode,
   validateRunName,
@@ -40,6 +41,7 @@ async function main() {
     runsPerPeriod: 4,
     period: "day",
     mode: "full",
+    computeDevice: "cpu",
     steps: 8,
     namePrefix: "Forecast run",
   });
@@ -48,6 +50,7 @@ async function main() {
     runsPerPeriod: 2,
     period: "week",
     mode: "inference",
+    computeDevice: "gpu",
     steps: 20,
     namePrefix: "Weekend model",
   }), {
@@ -55,6 +58,7 @@ async function main() {
     runsPerPeriod: 2,
     period: "week",
     mode: "inference",
+    computeDevice: "gpu",
     steps: 20,
     namePrefix: "Weekend model",
   });
@@ -67,6 +71,13 @@ async function main() {
   assert.equal(validateRunMode(undefined), "full");
   assert.equal(validateRunMode("inference"), "inference");
   assert.throws(() => validateRunMode("download"), /full or inference/);
+  assert.equal(validateComputeDevice(undefined), "cpu");
+  assert.equal(validateComputeDevice("gpu"), "gpu");
+  assert.throws(() => validateComputeDevice("tpu"), /cpu or gpu/);
+  assert.throws(
+    () => validateSchedule({ enabled: true, runsPerPeriod: 1, period: "day", computeDevice: "tpu" }),
+    /cpu or gpu/,
+  );
   assert.equal(validateForecastSteps(12), 12);
   assert.throws(() => validateForecastSteps(0), /1 to 40/);
   assert.equal(validateScheduleNamePrefix("  Nightly forecast  "), "Nightly forecast");
@@ -138,6 +149,7 @@ async function main() {
         enabled: true,
         namePrefix: "Scheduled inference",
         mode: "inference",
+        computeDevice: "gpu",
         steps: 8,
         runsPerPeriod: 1,
         period: "day",
@@ -148,12 +160,14 @@ async function main() {
         enabled: true,
         namePrefix: "Nightly model",
         mode: "full",
+        computeDevice: "gpu",
         steps: 12,
         runsPerPeriod: 2,
         period: "day",
       });
       assert.equal(savedFullSchedule.status, 200);
       assert.equal(savedFullSchedule.body.schedule.mode, "full");
+      assert.equal(savedFullSchedule.body.schedule.computeDevice, "gpu");
       assert.equal(savedFullSchedule.body.schedule.steps, 12);
       assert.equal(savedFullSchedule.body.schedule.namePrefix, "Nightly model");
       service.state.runs.push({

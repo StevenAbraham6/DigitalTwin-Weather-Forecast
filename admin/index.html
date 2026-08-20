@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#071210" />
   <title>Pipeline Control — Digital Twin Earth</title>
-  <link rel="stylesheet" href="/admin/admin.css?v=4" />
+  <link rel="stylesheet" href="/admin/admin.css?v=5" />
 </head>
 <body>
   <div class="aurora" aria-hidden="true"></div>
@@ -60,6 +60,12 @@
               <option value="inference">Inference only</option>
             </select>
           </label>
+          <label for="compute-device">Compute
+            <select id="compute-device">
+              <option value="cpu" selected>CPU only</option>
+              <option value="gpu">GPU · CUDA</option>
+            </select>
+          </label>
           <label for="forecast-steps">Forecast frames
             <select id="forecast-steps">
               <option value="4">4 · 24 hours</option>
@@ -70,7 +76,7 @@
             </select>
           </label>
         </div>
-        <p class="execution-description">A full pipeline downloads the latest ERA5T state. Inference only reuses the most recent downloaded and prepared base data. Both paths validate and publish a new forecast.</p>
+        <p class="execution-description">A full pipeline downloads the latest ERA5T state. Inference only reuses the most recent downloaded and prepared base data. CPU only forces JAX onto the processors; GPU requires a working CUDA-enabled JAX installation and will not silently fall back.</p>
         <p id="reusable-data" class="base-data-status">Checking for reusable base data…</p>
       </div>
 
@@ -145,6 +151,7 @@
               <th>Inference</th>
               <th>Snapshots</th>
               <th>Run type</th>
+              <th>Compute</th>
               <th><span class="sr-only">Logs</span></th>
             </tr>
           </thead>
@@ -167,6 +174,6 @@
     <pre id="dialog-log" class="log-view"></pre>
   </dialog>
 
-  <script src="/admin/admin.js?v=4"></script>
+  <script src="/admin/admin.js?v=5"></script>
 </body>
 </html>

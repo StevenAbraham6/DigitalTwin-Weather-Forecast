@@ -14,12 +14,13 @@ const PERIOD_MS = {
 
 function defaultState() {
   return {
-    version: 3,
+    version: 4,
     schedule: {
       enabled: false,
       runsPerPeriod: 1,
       period: "day",
       mode: "full",
+      computeDevice: "cpu",
       steps: 8,
       namePrefix: "Forecast run",
       nextRunAt: null,
@@ -56,6 +57,14 @@ function validateRunMode(value) {
     throw new Error("Run mode must be full or inference.");
   }
   return mode;
+}
+
+function validateComputeDevice(value) {
+  const computeDevice = value ?? "cpu";
+  if (computeDevice !== "cpu" && computeDevice !== "gpu") {
+    throw new Error("Compute device must be cpu or gpu.");
+  }
+  return computeDevice;
 }
 
 function validateForecastSteps(value) {
@@ -150,9 +159,10 @@ function validateSchedule(input) {
     throw new Error(`Runs per ${period} must be a whole number from 1 to ${limit}.`);
   }
   const mode = validateRunMode(input?.mode);
+  const computeDevice = validateComputeDevice(input?.computeDevice);
   const steps = validateForecastSteps(input?.steps);
   const namePrefix = validateScheduleNamePrefix(input?.namePrefix ?? "Forecast run");
-  return { enabled, period, runsPerPeriod, mode, steps, namePrefix };
+  return { enabled, period, runsPerPeriod, mode, computeDevice, steps, namePrefix };
 }
 
 function safeNumber(value) {
@@ -249,12 +259,13 @@ class AdminService {
     this.state = {
       ...defaultState(),
       ...loadedState,
-      version: 3,
+      version: 4,
       schedule: { ...defaultState().schedule, ...loadedState.schedule },
       runs: Array.isArray(loadedState.runs) ? loadedState.runs : [],
     };
     for (const run of this.state.runs) {
       run.mode ||= "full";
+      run.computeDevice ||= "cpu";
       run.name ||= defaultRunName(run.mode, run.trigger, run.startedAt || run.queuedAt);
     }
     this.activeProcess = null;
@@ -324,7 +335,12 @@ class AdminService {
       try {
         this._assertSameOrigin(request);
         const body = await collectBody(request);
-        const run = this.startRun("manual", { steps: body.steps, mode: body.mode, name: body.name });
+        const run = this.startRun("manual", {
+          steps: body.steps,
+          mode: body.mode,
+          computeDevice: body.computeDevice,
+          name: body.name,
+        });
         this._sendJson(response, 202, { run });
       } catch (error) {
         this._sendJson(response, ["RUN_ACTIVE", "NO_BASE_DATA"].includes(error.code) ? 409 : 400, { error: error.message });
@@ -402,6 +418,7 @@ class AdminService {
       try {
         this.startRun("scheduled", {
           mode: schedule.mode,
+          computeDevice: schedule.computeDevice,
           steps: schedule.steps,
           name: scheduledRunName(schedule.namePrefix),
         });
@@ -424,6 +441,7 @@ class AdminService {
     const steps = validateForecastSteps(options.steps);
     const now = new Date().toISOString();
     const mode = validateRunMode(options.mode);
+    const computeDevice = validateComputeDevice(options.computeDevice);
     const reusableBaseData = mode === "inference" ? findReusableBaseData(this.workDir, this.state.runs) : null;
     if (mode === "inference" && !reusableBaseData) {
       const error = new Error("Inference-only requires base data from a previous full pipeline run.");
@@ -435,6 +453,7 @@ class AdminService {
       name: validateRunName(options.name, defaultRunName(mode, trigger, now)),
       trigger,
       mode,
+      computeDevice,
       baseSourceRunId: reusableBaseData?.sourceRunId || null,
       status: "queued",
       stage: "starting",
@@ -463,6 +482,7 @@ class AdminService {
     const args = [
       runner,
       "--mode", mode,
+      "--compute-device", computeDevice,
       "--execution-id", run.id,
       "--steps", String(steps),
       "--work-dir", this.workDir,
@@ -552,6 +572,7 @@ module.exports = {
   findReusableBaseData,
   nextScheduledTime,
   scheduledRunName,
+  validateComputeDevice,
   validateForecastSteps,
   validateRunMode,
   validateRunName,

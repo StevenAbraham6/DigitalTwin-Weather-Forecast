@@ -32,6 +32,8 @@ graphcast = [
 # They are intentionally not required by the existing sample-data pipeline.
 hres = ["ecmwf-opendata>=0.3", "cfgrib>=0.9.11", "eccodes>=1.7"]
 era5 = ["cdsapi>=0.7"]
+# Install explicitly on NVIDIA Linux hosts; CPU remains the portable default.
+gpu = ["jax[cuda12]==0.4.38; sys_platform == 'linux'"]
 dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
 
 [project.scripts]

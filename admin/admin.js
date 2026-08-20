@@ -11,6 +11,7 @@ const elements = {
   runNow: document.querySelector("#run-now"),
   runName: document.querySelector("#run-name"),
   runMode: document.querySelector("#run-mode"),
+  computeDevice: document.querySelector("#compute-device"),
   forecastSteps: document.querySelector("#forecast-steps"),
   reusableData: document.querySelector("#reusable-data"),
   runMessage: document.querySelector("#run-message"),
@@ -113,6 +114,7 @@ function render(state) {
   }
   elements.runName.disabled = pipeline.active;
   elements.runMode.disabled = pipeline.active;
+  elements.computeDevice.disabled = pipeline.active;
   elements.forecastSteps.disabled = pipeline.active;
   elements.snapshotStorage.textContent = formatBytes(storage.snapshotBytes);
   elements.snapshotDetail.textContent = `${storage.snapshotCount.toLocaleString()} UI snapshots retained`;
@@ -124,7 +126,7 @@ function render(state) {
   elements.lastRunDetail.textContent = last ? `${capitalize(last.status)} · ${formatDuration(last.durationMs)}` : "No execution history yet";
   if (schedule.enabled && schedule.nextRunAt) {
     elements.nextRun.textContent = formatDate(schedule.nextRunAt);
-    elements.nextRunDetail.textContent = `${schedule.mode === "inference" ? "Inference only" : "Full pipeline"} · ${schedule.steps} frames · ${schedule.runsPerPeriod} ${schedule.runsPerPeriod === 1 ? "time" : "times"} per ${schedule.period}`;
+    elements.nextRunDetail.textContent = `${schedule.mode === "inference" ? "Inference only" : "Full pipeline"} · ${computeLabel(schedule.computeDevice)} · ${schedule.steps} frames · ${schedule.runsPerPeriod} ${schedule.runsPerPeriod === 1 ? "time" : "times"} per ${schedule.period}`;
   } else {
     elements.nextRun.textContent = "Off";
     elements.nextRunDetail.textContent = "No recurring schedule";
@@ -133,6 +135,7 @@ function render(state) {
     elements.scheduleEnabled.checked = schedule.enabled;
     elements.runName.value = schedule.namePrefix;
     elements.runMode.value = schedule.mode;
+    elements.computeDevice.value = schedule.computeDevice || "cpu";
     elements.forecastSteps.value = String(schedule.steps);
     elements.runsPerPeriod.value = schedule.runsPerPeriod;
     elements.schedulePeriod.value = schedule.period;
@@ -148,7 +151,7 @@ function renderActive(run) {
   elements.activeRun.hidden = !run;
   if (!run) return;
   const stageIndex = Math.max(0, stages.indexOf(run.stage));
-  elements.activeTitle.textContent = `${run.name || "Pipeline run"} · ${stageLabels[run.stage] || "Starting pipeline"}…`;
+  elements.activeTitle.textContent = `${run.name || "Pipeline run"} · ${computeLabel(run.computeDevice)} · ${stageLabels[run.stage] || "Starting pipeline"}…`;
   elements.activeElapsed.textContent = formatDuration(Date.now() - new Date(run.startedAt).getTime());
   elements.progressBar.style.width = `${Math.max(4, (stageIndex / stages.length) * 100 + 8)}%`;
   elements.stageList.replaceChildren(...stages.map((stage, index) => {
@@ -191,6 +194,7 @@ function renderHistory(runs) {
       { text: formatDuration(run.inferenceDurationMs) },
       { text: run.snapshotBytes == null ? "—" : `${formatBytes(run.snapshotBytes)} · ${run.snapshotCount}` },
       { text: `${capitalize(run.trigger)} · ${run.mode === "inference" ? "Inference only" : "Full pipeline"}` },
+      { text: computeLabel(run.computeDevice) },
     ];
     for (const value of values) {
       const cell = document.createElement("td");
@@ -240,6 +244,7 @@ function showRun(run) {
   elements.dialogTitle.textContent = run.name || run.publishedRunId || `Execution ${run.id.slice(0, 8)}`;
   const items = [
     `${capitalize(run.trigger)} · ${run.mode === "inference" ? "Inference only · reused base data" : "Full pipeline"}`,
+    `Compute ${computeLabel(run.computeDevice)}`,
     `Started ${formatDate(run.startedAt)}`,
     `Ended ${formatDate(run.endedAt)}`,
     `Total ${formatDuration(run.durationMs)}`,
@@ -262,18 +267,20 @@ function logText(logs = []) {
 }
 
 function capitalize(value = "") { return value.charAt(0).toUpperCase() + value.slice(1); }
+function computeLabel(value) { return value === "gpu" ? "GPU · CUDA" : "CPU only"; }
 
 async function startRun() {
   const mode = elements.runMode.value;
   elements.runNow.disabled = true;
   const label = mode === "inference" ? "inference" : "full pipeline";
-  setMessage(elements.runMessage, `Starting ${label}…`);
+  setMessage(elements.runMessage, `Starting ${label} on ${computeLabel(elements.computeDevice.value)}…`);
   try {
     await api("/api/admin/runs", {
       method: "POST",
       body: JSON.stringify({
         steps: Number(elements.forecastSteps.value),
         mode,
+        computeDevice: elements.computeDevice.value,
         name: elements.runName.value,
       }),
     });
@@ -295,6 +302,7 @@ elements.saveSchedule.addEventListener("click", async () => {
       enabled: elements.scheduleEnabled.checked,
       namePrefix: elements.runName.value,
       mode: elements.runMode.value,
+      computeDevice: elements.computeDevice.value,
       steps: Number(elements.forecastSteps.value),
       runsPerPeriod: Number(elements.runsPerPeriod.value),
       period: elements.schedulePeriod.value,
