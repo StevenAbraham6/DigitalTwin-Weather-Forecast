@@ -1,6 +1,8 @@
 .DS_Store
 *.log
 node_modules/
+/outputs/
+/.tmp_xdirect_inspect/
 .env
 .env.*
 config.local.js
