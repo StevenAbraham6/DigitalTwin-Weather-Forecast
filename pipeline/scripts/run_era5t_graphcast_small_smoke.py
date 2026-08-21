@@ -39,19 +39,20 @@ def emit_timing(name: str, label: str, started: float) -> None:
     print(f"Inference timing · {label}: {duration_ms / 1000:.3f} s", flush=True)
 
 
-def synchronize(dataset: xr.Dataset) -> None:
+def synchronize(dataset: xr.Dataset, xarray_jax: object) -> None:
     """Wait until every forecast field has completed on the selected device."""
     for variable in dataset.data_vars.values():
-        wait = getattr(variable.data, "block_until_ready", None)
+        device_data = xarray_jax.unwrap_data(variable)
+        wait = getattr(device_data, "block_until_ready", None)
         if wait is not None:
             wait()
 
 
-def transfer_to_host(dataset: xr.Dataset) -> xr.Dataset:
+def transfer_to_host(dataset: xr.Dataset, xarray_jax: object) -> xr.Dataset:
     """Materialize device-backed fields as NumPy arrays before serialization."""
     materialized = dataset.copy()
     for name in materialized.data_vars:
-        materialized[name].data = np.asarray(materialized[name].data)
+        materialized[name].data = np.asarray(xarray_jax.unwrap_data(materialized[name]))
     return materialized
 
 
@@ -64,7 +65,7 @@ def main() -> None:
     parser.add_argument("--compute-device", choices=("auto", "cpu", "gpu"), default="auto")
     args = parser.parse_args()
     sys.path.insert(0, str(args.upstream))
-    from graphcast import autoregressive, casting, checkpoint, data_utils, graphcast, normalization
+    from graphcast import autoregressive, casting, checkpoint, data_utils, graphcast, normalization, xarray_jax
 
     if args.steps < 1:
         raise ValueError("--steps must be positive")
@@ -130,11 +131,11 @@ def main() -> None:
 
     rollout_started = time.monotonic()
     prediction, _ = compiled_run(random_key, inputs, target_template, forcings)
-    synchronize(prediction)
+    synchronize(prediction, xarray_jax)
     emit_timing("modelRollout", f"GraphCast rollout ({args.steps} steps)", rollout_started)
 
     transfer_started = time.monotonic()
-    prediction = transfer_to_host(prediction)
+    prediction = transfer_to_host(prediction, xarray_jax)
     emit_timing("deviceToHost", "Transfer forecast to host", transfer_started)
     prediction.attrs.update(
         {

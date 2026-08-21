@@ -186,6 +186,14 @@ function renderHistory(runs) {
     });
     nameCell.append(nameInput);
     row.append(nameCell);
+    const actions = document.createElement("td");
+    const button = document.createElement("button");
+    button.className = "quiet-button";
+    button.type = "button";
+    button.textContent = "Details";
+    button.addEventListener("click", () => showRun(run));
+    actions.append(button);
+    row.append(actions);
     const values = [
       { text: run.status, className: `run-status ${run.status}` },
       { text: formatDate(run.startedAt) },
@@ -204,14 +212,6 @@ function renderHistory(runs) {
       cell.append(content);
       row.append(cell);
     }
-    const actions = document.createElement("td");
-    const button = document.createElement("button");
-    button.className = "quiet-button";
-    button.type = "button";
-    button.textContent = "Details";
-    button.addEventListener("click", () => showRun(run));
-    actions.append(button);
-    row.append(actions);
     return row;
   }));
   elements.emptyHistory.hidden = runs.length > 0;
