@@ -2,6 +2,7 @@
 """Install and verify the matched ROCm 7 JAX stack used by the admin pipeline."""
 from __future__ import annotations
 
+import ctypes
 import importlib.metadata
 import os
 import platform
@@ -38,12 +39,29 @@ def rocm_release() -> str:
     return "7.2.4"
 
 
+def verify_rocm_runtime() -> None:
+    if not Path("/dev/kfd").exists():
+        raise SystemExit(
+            "ROCm cannot access the AMD GPU because /dev/kfd is missing. Install the full "
+            "ROCm 7.2 runtime and ensure the user belongs to the render and video groups."
+        )
+    try:
+        ctypes.CDLL("libamdhip64.so.7")
+    except OSError as error:
+        raise SystemExit(
+            "The ROCm 7 HIP runtime (libamdhip64.so.7) is not loadable. Installing the AMD "
+            "display driver alone is not sufficient; install the full ROCm 7.2 runtime and "
+            f"verify /opt/rocm before retrying. Loader error: {error}"
+        ) from None
+
+
 def main() -> None:
     if sys.platform != "linux" or platform.machine() not in {"x86_64", "AMD64"}:
         raise SystemExit("AMD JAX setup requires x86_64 Linux with ROCm already installed.")
     python_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
     if python_tag not in {"cp311", "cp312"}:
         raise SystemExit("AMD JAX setup supports Python 3.11 or 3.12.")
+    verify_rocm_runtime()
 
     rocm_version = rocm_release()
     if not re.fullmatch(r"7\.2\.\d+", rocm_version):
@@ -84,7 +102,14 @@ def main() -> None:
     environment["JAX_PLATFORMS"] = "rocm"
     environment.setdefault("LLVM_PATH", "/opt/rocm/llvm")
     subprocess.run(
-        [sys.executable, "-c", "import jax; print('ROCm devices:', jax.devices())"],
+        [
+            sys.executable,
+            "-c",
+            (
+                "import jax_rocm7_plugin.rocm_plugin_extension; "
+                "import jax; print('ROCm devices:', jax.devices())"
+            ),
+        ],
         check=True,
         env=environment,
     )

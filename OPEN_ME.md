@@ -79,6 +79,10 @@ ROCm JAX stack before selecting **GPU · AMD Radeon AI PRO R9700**:
 npm run pipeline:setup:amd
 ```
 
+The full ROCm runtime—not only the AMD display driver—must expose `/dev/kfd`,
+`/opt/rocm`, and `libamdhip64.so.7`. The setup command checks these prerequisites
+before downloading the JAX wheels and verifies the detected ROCm device afterward.
+
 GPU selection is strict: if the selected CUDA or ROCm JAX backend cannot
 initialize, the execution fails and records the requested target, JAX platform,
 actual backend, device name, and backend error instead of silently using CPU.
