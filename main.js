@@ -267,18 +267,8 @@ const pipelineSurfaceCache = new Map();
 let pipelineManifest = null;
 let pipelineRefreshPromise = null;
 let activeWeatherSource = "synthetic";
-const graphcastSource = Object.freeze({
-  mode: "pipeline",
-  label: "Google GraphCast Small",
-  status: "",
-  cityNote: "Google GraphCast Small sample forecast data",
-});
-let requestedWeatherSource = localStorage.getItem("digital-twin-earth.weather-source") || "graphcast";
-// Migrate prior Auto, Real pipeline, and fixed-ERA5T selections to the single
-// latest GraphCast option rather than preserving a stale source choice.
-if (["auto", "pipeline", "graphcast-era5t"].includes(requestedWeatherSource)) requestedWeatherSource = "graphcast";
-if (!["graphcast", "synthetic"].includes(requestedWeatherSource)) requestedWeatherSource = "graphcast";
-localStorage.setItem("digital-twin-earth.weather-source", requestedWeatherSource);
+let requestedWeatherSource = localStorage.getItem("digital-twin-earth.node-source") || "";
+let nodeSourcesSignature = "";
 
 const stars = makeStars();
 scene.add(stars);
@@ -312,9 +302,9 @@ let lastRemoteCameraSequence = -1;
 let remoteCameraIntent = { pan: 0, tilt: 0, zoom: 0 };
 let remoteCameraInputAt = 0;
 
-weatherSourceSelect.value = requestedWeatherSource;
-setWeatherSource(requestedWeatherSource);
+initializeNodeSources();
 window.setInterval(refreshLatestPipeline, 60_000);
+window.setInterval(initializeNodeSources, 15_000);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refreshLatestPipeline();
 });
@@ -470,7 +460,7 @@ function selectWeatherSource(source) {
   if (![...weatherSourceSelect.options].some((option) => option.value === source)) return;
   requestedWeatherSource = source;
   weatherSourceSelect.value = source;
-  localStorage.setItem("digital-twin-earth.weather-source", requestedWeatherSource);
+  localStorage.setItem("digital-twin-earth.node-source", requestedWeatherSource);
   setWeatherSource(requestedWeatherSource);
   publishControlState({ sourceStatus: "loading" });
 }
@@ -682,31 +672,61 @@ function executeRemoteCommand(command, id) {
 
 async function setWeatherSource(mode) {
   const request = mode;
-  textureStatus.textContent = mode === "synthetic" ? "Synthetic demo" : "Loading forecast pipeline...";
+  const option = weatherSourceSelect.selectedOptions[0];
+  textureStatus.textContent = "Loading forecast pipeline...";
   try {
-    if (mode === "synthetic") throw new Error("Synthetic demo selected");
-    // GraphCast resolves through the main catalog's `latest` pointer, so a
-    // saved selection can never pin the UI to an older fixed source run.
-    const pipeline = await loadPipelineForecast();
+    if (!mode || !option?.dataset.forecastUrl) throw new Error("No forecast node selected");
+    const pipeline = await loadPipelineForecast(mode);
     if (request !== requestedWeatherSource) return;
-    activatePipeline(pipeline, mode === "graphcast" ? graphcastSource : undefined);
+    activatePipeline(pipeline, {
+      mode: "pipeline",
+      label: `${option.textContent} · Google GraphCast Small`,
+      status: "",
+      cityNote: `Google GraphCast Small forecast from ${option.textContent}`,
+    });
   } catch (error) {
     if (request !== requestedWeatherSource) return;
     console.warn("Forecast pipeline could not load", error);
-    if (mode === "synthetic") {
-      activateSynthetic();
-    } else {
-      activateUnavailablePipeline(mode === "graphcast" ? {
-        label: "Google GraphCast Small",
-        message: "Google GraphCast Small sample data could not be loaded.",
-        status: "Forecast data unavailable.",
-      } : undefined);
-    }
+    activateUnavailablePipeline({
+      label: option?.textContent || "Selected node",
+      message: "The selected node has not published forecast data yet.",
+      status: "Forecast data unavailable.",
+    });
   }
 }
 
-async function loadPipelineForecast() {
-  const { catalog, catalogUrl } = await loadForecastCatalog();
+async function initializeNodeSources() {
+  try {
+    const response = await fetchJson(new URL("./api/nodes", window.location.href), { cache: "no-store" });
+    const nodes = (response.nodes || []).filter((node) => node.self || node.connected);
+    const signature = nodes.map((node) => `${node.id}:${node.name}:${node.connected}`).join("|");
+    if (signature === nodeSourcesSignature) return;
+    const previousSource = requestedWeatherSource;
+    weatherSourceSelect.replaceChildren(...nodes.map((node) => {
+      const option = document.createElement("option");
+      option.value = node.id;
+      option.textContent = `${node.name}${node.self ? " (master)" : ""}`;
+      option.dataset.forecastUrl = node.self
+        ? new URL("./forecasts/", window.location.href).href
+        : new URL(`./node-forecasts/${encodeURIComponent(node.id)}/`, window.location.href).href;
+      return option;
+    }));
+    if (!nodes.length) throw new Error("No configured nodes are available");
+    if (!nodes.some((node) => node.id === requestedWeatherSource)) requestedWeatherSource = nodes[0].id;
+    weatherSourceSelect.value = requestedWeatherSource;
+    localStorage.setItem("digital-twin-earth.node-source", requestedWeatherSource);
+    nodeSourcesSignature = signature;
+    if (!pipelineManifest || previousSource !== requestedWeatherSource) await setWeatherSource(requestedWeatherSource);
+  } catch (error) {
+    console.warn("Could not load cluster nodes", error);
+    activateUnavailablePipeline({ label: "Cluster unavailable", message: "Connected nodes could not be loaded.", status: "Node service unavailable." });
+  }
+}
+
+async function loadPipelineForecast(source = requestedWeatherSource) {
+  const option = [...weatherSourceSelect.options].find((candidate) => candidate.value === source);
+  if (!option?.dataset.forecastUrl) throw new Error("Forecast node is unavailable");
+  const { catalog, catalogUrl } = await loadForecastCatalog(new URL("catalog.json", option.dataset.forecastUrl));
   const model = catalog.models?.[0];
   if (!model?.latestManifestPath) throw new Error("Forecast catalog has no model manifest");
   const { manifest, manifestUrl } = await loadForecastManifest(model, catalogUrl);
@@ -721,13 +741,19 @@ async function loadPipelineForecast() {
 }
 
 async function refreshLatestPipeline() {
-  if (requestedWeatherSource !== "graphcast" || document.hidden || pipelineRefreshPromise) return;
-  const request = loadPipelineForecast();
+  if (!requestedWeatherSource || document.hidden || pipelineRefreshPromise) return;
+  const request = loadPipelineForecast(requestedWeatherSource);
   pipelineRefreshPromise = request;
   try {
     const pipeline = await request;
-    if (requestedWeatherSource !== "graphcast" || pipeline.manifest.runId === pipelineManifest?.runId) return;
-    activatePipeline(pipeline, graphcastSource);
+    if (pipeline.manifest.runId === pipelineManifest?.runId) return;
+    const option = weatherSourceSelect.selectedOptions[0];
+    activatePipeline(pipeline, {
+      mode: "pipeline",
+      label: `${option?.textContent || "Selected node"} · Google GraphCast Small`,
+      status: "",
+      cityNote: `Google GraphCast Small forecast from ${option?.textContent || "selected node"}`,
+    });
     publishControlState();
   } catch (error) {
     console.warn("Could not check for a newer forecast run", error);

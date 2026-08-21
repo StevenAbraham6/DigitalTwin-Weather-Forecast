@@ -43,10 +43,9 @@
       <fieldset class="layer-panel" aria-label="Forecast layers">
           <legend>Forecast layers</legend>
           <label><input id="day-night-toggle" type="checkbox" checked /> Day / night</label>
-          <label class="layer-select" for="weather-source">Weather data
+          <label class="layer-select" for="weather-source">Node
             <select id="weather-source">
-              <option value="graphcast">Google GraphCast Small</option>
-              <option value="synthetic">Synthetic demo</option>
+              <option value="">Loading nodes…</option>
             </select>
           </label>
           <div id="layer-controls"></div>
@@ -112,6 +111,6 @@
     <script src="./config.js"></script>
     <script src="./shared/protocol.js"></script>
     <script src="./shared/forecast-binary.js?v=20260722-float32"></script>
-    <script src="./main.js?v=20260722-scrub-wind"></script>
+    <script src="./main.js?v=20260821-cluster-nodes"></script>
   </body>
 </html>

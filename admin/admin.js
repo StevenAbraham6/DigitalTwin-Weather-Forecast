@@ -1,9 +1,19 @@
 const elements = {
+  setup: document.querySelector("#node-setup"),
+  dashboard: document.querySelector("#admin-dashboard"),
+  displayLink: document.querySelector("#display-link"),
+  nodeName: document.querySelector("#node-name"),
+  serverModel: document.querySelector("#server-model"),
+  masterUrlField: document.querySelector("#master-url-field"),
+  masterUrl: document.querySelector("#master-url"),
+  saveNode: document.querySelector("#save-node"),
+  setupMessage: document.querySelector("#setup-message"),
+  currentNode: document.querySelector("#current-node"),
+  currentNodeDetail: document.querySelector("#current-node-detail"),
+  executionNode: document.querySelector("#execution-node"),
   pipelineStatus: document.querySelector("#pipeline-status"),
   snapshotStorage: document.querySelector("#snapshot-storage"),
   snapshotDetail: document.querySelector("#snapshot-detail"),
-  publishedRuns: document.querySelector("#published-runs"),
-  publishedTotal: document.querySelector("#published-total"),
   lastRun: document.querySelector("#last-run"),
   lastRunDetail: document.querySelector("#last-run-detail"),
   nextRun: document.querySelector("#next-run"),
@@ -41,6 +51,15 @@ const stageLabels = { download: "Download data", preparation: "Prepare inputs", 
 let latestState = null;
 let pollTimer = null;
 let scheduleHydrated = false;
+let nodeOptionsSignature = "";
+
+const configLabels = {
+  cpu_12c: "CPU 12c",
+  cpu_20c: "CPU 20c",
+  cpu_32c: "CPU 32c",
+  gpu_amd: "GPU AMD",
+  gpu_l4: "GPU Nvidia L4",
+};
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return "—";
@@ -86,6 +105,13 @@ async function api(path, options = {}) {
 async function refresh() {
   try {
     latestState = await api("/api/admin/status");
+    if (!latestState.configured) {
+      renderSetup(latestState.savedProfile);
+      scheduleNextPoll(10000);
+      return;
+    }
+    elements.setup.hidden = true;
+    elements.dashboard.hidden = false;
     render(latestState);
     scheduleNextPoll(latestState.pipeline.active ? 2500 : 10000);
   } catch (error) {
@@ -100,33 +126,91 @@ function scheduleNextPoll(delay) {
   pollTimer = setTimeout(refresh, delay);
 }
 
+function renderSetup(profile = {}) {
+  elements.setup.hidden = false;
+  elements.dashboard.hidden = true;
+  elements.displayLink.hidden = true;
+  if (!elements.nodeName.value) {
+    const role = profile.role === "slave" ? "slave" : "master";
+    document.querySelector(`input[name="node-role"][value="${role}"]`).checked = true;
+    elements.nodeName.value = profile.name || (role === "master" ? "Master" : "Slave");
+    elements.serverModel.value = profile.serverModel || "XE130c M8";
+    elements.masterUrl.value = profile.masterUrl || "";
+    const selected = new Set(profile.config || ["cpu_12c"]);
+    document.querySelectorAll('input[name="node-config"]').forEach((input) => { input.checked = selected.has(input.value); });
+  }
+  updateRoleFields();
+}
+
+function updateRoleFields() {
+  const role = document.querySelector('input[name="node-role"]:checked')?.value || "master";
+  elements.masterUrlField.hidden = role !== "slave";
+}
+
+function getSelectedNode() {
+  return latestState?.nodes?.find((node) => node.id === elements.executionNode.value) || latestState?.nodes?.[0] || null;
+}
+
+function updateNodeOptions(nodes = [], schedule = {}) {
+  const available = nodes.filter((node) => node.self || node.connected);
+  const signature = available.map((node) => `${node.id}:${node.name}:${node.connected}:${node.config.join(",")}`).join("|");
+  if (signature === nodeOptionsSignature) return;
+  const previous = elements.executionNode.value || schedule.nodeId;
+  elements.executionNode.replaceChildren(...available.map((node) => {
+    const option = document.createElement("option");
+    option.value = node.id;
+    option.textContent = `${node.name}${node.self ? " (this node)" : ""}`;
+    return option;
+  }));
+  if (available.some((node) => node.id === previous)) elements.executionNode.value = previous;
+  nodeOptionsSignature = signature;
+  updateComputeOptions();
+}
+
+function updateComputeOptions() {
+  const node = getSelectedNode();
+  const previous = elements.computeDevice.value;
+  elements.computeDevice.replaceChildren(...(node?.config || []).map((config) => {
+    const option = document.createElement("option");
+    option.value = config;
+    option.textContent = configLabels[config] || config;
+    return option;
+  }));
+  if (node?.config.includes(previous)) elements.computeDevice.value = previous;
+  updateRunAvailability();
+}
+
 function render(state) {
   const { pipeline, storage, schedule, runs, currentRun } = state;
-  elements.pipelineStatus.className = `status-pill ${pipeline.active ? "running" : pipeline.ready ? "ready" : "error"}`;
-  elements.pipelineStatus.lastChild.textContent = pipeline.active ? " Pipeline running" : pipeline.ready ? " Pipeline ready" : " Setup required";
-  elements.runMode.querySelector('option[value="inference"]').disabled = !pipeline.reusableBaseData;
-  if (pipeline.reusableBaseData) {
-    elements.reusableData.textContent = `Reusable base data: ERA5T ${formatDate(pipeline.reusableBaseData.initializationTime)}`;
+  updateNodeOptions(state.nodes, schedule);
+  const selectedNode = getSelectedNode();
+  const selectedActive = Boolean(selectedNode?.active);
+  elements.pipelineStatus.className = `status-pill ${pipeline.active ? "running" : selectedNode?.pipelineReady ? "ready" : "error"}`;
+  elements.pipelineStatus.lastChild.textContent = pipeline.active ? " Pipeline running" : selectedNode?.pipelineReady ? " Pipeline ready" : " Setup required";
+  elements.displayLink.hidden = state.node.role !== "master";
+  elements.currentNode.textContent = state.node.name;
+  elements.currentNodeDetail.textContent = `${capitalize(state.node.role)} · ${state.node.serverModel} · ${state.node.config.map((item) => configLabels[item] || item).join(", ")}`;
+  elements.runMode.querySelector('option[value="inference"]').disabled = !selectedNode?.reusableBaseData;
+  if (selectedNode?.reusableBaseData) {
+    elements.reusableData.textContent = `Reusable base data on ${selectedNode.name}: ERA5T ${formatDate(selectedNode.reusableBaseData.initializationTime)}`;
     elements.reusableData.classList.add("available");
   } else {
     elements.reusableData.textContent = "No reusable base data yet. Run the full pipeline first.";
     elements.reusableData.classList.remove("available");
   }
-  elements.runName.disabled = pipeline.active;
-  elements.runMode.disabled = pipeline.active;
-  elements.computeDevice.disabled = pipeline.active;
-  elements.forecastSteps.disabled = pipeline.active;
+  elements.runName.disabled = selectedActive;
+  elements.runMode.disabled = selectedActive;
+  elements.computeDevice.disabled = selectedActive;
+  elements.forecastSteps.disabled = selectedActive;
   elements.snapshotStorage.textContent = formatBytes(storage.snapshotBytes);
   elements.snapshotDetail.textContent = `${storage.snapshotCount.toLocaleString()} UI snapshots retained`;
-  elements.publishedRuns.textContent = storage.runCount.toLocaleString();
-  elements.publishedTotal.textContent = `${formatBytes(storage.totalBytes)} total artifacts`;
 
   const last = runs.find((run) => run.status === "complete" || run.status === "failed");
   elements.lastRun.textContent = last ? formatDate(last.endedAt || last.startedAt) : "—";
   elements.lastRunDetail.textContent = last ? `${capitalize(last.status)} · ${formatDuration(last.durationMs)}` : "No execution history yet";
   if (schedule.enabled && schedule.nextRunAt) {
     elements.nextRun.textContent = formatDate(schedule.nextRunAt);
-    elements.nextRunDetail.textContent = `${schedule.mode === "inference" ? "Inference only" : "Full pipeline"} · ${computeLabel(schedule.computeDevice)} · ${schedule.steps} frames · ${schedule.runsPerPeriod} ${schedule.runsPerPeriod === 1 ? "time" : "times"} per ${schedule.period}`;
+    elements.nextRunDetail.textContent = `${schedule.mode === "inference" ? "Inference only" : "Full pipeline"} · ${computeLabel(schedule.computeConfig || schedule.computeDevice)} · ${schedule.steps} frames · ${schedule.runsPerPeriod} ${schedule.runsPerPeriod === 1 ? "time" : "times"} per ${schedule.period}`;
   } else {
     elements.nextRun.textContent = "Off";
     elements.nextRunDetail.textContent = "No recurring schedule";
@@ -135,10 +219,12 @@ function render(state) {
     elements.scheduleEnabled.checked = schedule.enabled;
     elements.runName.value = schedule.namePrefix;
     elements.runMode.value = schedule.mode;
-    elements.computeDevice.value = schedule.computeDevice || "cpu";
     elements.forecastSteps.value = String(schedule.steps);
     elements.runsPerPeriod.value = schedule.runsPerPeriod;
     elements.schedulePeriod.value = schedule.period;
+    if (schedule.nodeId && [...elements.executionNode.options].some((option) => option.value === schedule.nodeId)) elements.executionNode.value = schedule.nodeId;
+    updateComputeOptions();
+    if (schedule.computeConfig && [...elements.computeDevice.options].some((option) => option.value === schedule.computeConfig)) elements.computeDevice.value = schedule.computeConfig;
     updateScheduleLimit();
     scheduleHydrated = true;
   }
@@ -151,7 +237,7 @@ function renderActive(run) {
   elements.activeRun.hidden = !run;
   if (!run) return;
   const stageIndex = Math.max(0, stages.indexOf(run.stage));
-  elements.activeTitle.textContent = `${run.name || "Pipeline run"} · ${computeLabel(run.computeDevice)} · ${stageLabels[run.stage] || "Starting pipeline"}…`;
+  elements.activeTitle.textContent = `${run.name || "Pipeline run"} · ${run.nodeName || "Local node"} · ${computeLabel(run.computeConfig || run.computeDevice)} · ${stageLabels[run.stage] || "Starting pipeline"}…`;
   elements.activeElapsed.textContent = formatDuration(Date.now() - new Date(run.startedAt).getTime());
   elements.progressBar.style.width = `${Math.max(4, (stageIndex / stages.length) * 100 + 8)}%`;
   elements.stageList.replaceChildren(...stages.map((stage, index) => {
@@ -186,6 +272,9 @@ function renderHistory(runs) {
     });
     nameCell.append(nameInput);
     row.append(nameCell);
+    const nodeCell = document.createElement("td");
+    nodeCell.textContent = run.nodeName || "Local node";
+    row.append(nodeCell);
     const actions = document.createElement("td");
     const button = document.createElement("button");
     button.className = "quiet-button";
@@ -202,7 +291,7 @@ function renderHistory(runs) {
       { text: formatDuration(run.inferenceDurationMs) },
       { text: run.snapshotBytes == null ? "—" : `${formatBytes(run.snapshotBytes)} · ${run.snapshotCount}` },
       { text: `${capitalize(run.trigger)} · ${run.mode === "inference" ? "Inference only" : "Full pipeline"}` },
-      { text: computeLabel(run.computeDevice) },
+      { text: computeLabel(run.computeConfig || run.computeDevice) },
     ];
     for (const value of values) {
       const cell = document.createElement("td");
@@ -244,7 +333,8 @@ function showRun(run) {
   elements.dialogTitle.textContent = run.name || run.publishedRunId || `Execution ${run.id.slice(0, 8)}`;
   const items = [
     `${capitalize(run.trigger)} · ${run.mode === "inference" ? "Inference only · reused base data" : "Full pipeline"}`,
-    `Compute ${computeLabel(run.computeDevice)}`,
+    `Node ${run.nodeName || "Local node"} · ${run.serverModel || ""}`,
+    `Compute ${computeLabel(run.computeConfig || run.computeDevice)}`,
     `Started ${formatDate(run.startedAt)}`,
     `Ended ${formatDate(run.endedAt)}`,
     `Total ${formatDuration(run.durationMs)}`,
@@ -277,6 +367,7 @@ function logText(logs = []) {
 
 function capitalize(value = "") { return value.charAt(0).toUpperCase() + value.slice(1); }
 function computeLabel(value) {
+  if (configLabels[value]) return configLabels[value];
   if (value === "gpu" || value === "gpu_l4") return "GPU · NVIDIA L4";
   if (value === "gpu_amd") return "GPU · AMD Radeon AI PRO R9700";
   return "CPU only";
@@ -291,9 +382,10 @@ async function startRun() {
     await api("/api/admin/runs", {
       method: "POST",
       body: JSON.stringify({
+        nodeId: elements.executionNode.value,
         steps: Number(elements.forecastSteps.value),
         mode,
-        computeDevice: elements.computeDevice.value,
+        computeConfig: elements.computeDevice.value,
         name: elements.runName.value,
       }),
     });
@@ -313,9 +405,10 @@ elements.saveSchedule.addEventListener("click", async () => {
   try {
     const body = {
       enabled: elements.scheduleEnabled.checked,
+      nodeId: elements.executionNode.value,
       namePrefix: elements.runName.value,
       mode: elements.runMode.value,
-      computeDevice: elements.computeDevice.value,
+      computeConfig: elements.computeDevice.value,
       steps: Number(elements.forecastSteps.value),
       runsPerPeriod: Number(elements.runsPerPeriod.value),
       period: elements.schedulePeriod.value,
@@ -337,14 +430,42 @@ function updateScheduleLimit() {
 
 function updateRunAvailability() {
   if (!latestState) return;
-  const inferenceUnavailable = elements.runMode.value === "inference" && !latestState.pipeline.reusableBaseData;
-  elements.runNow.disabled = latestState.pipeline.active || !latestState.pipeline.ready || inferenceUnavailable;
+  const node = getSelectedNode();
+  const inferenceUnavailable = elements.runMode.value === "inference" && !node?.reusableBaseData;
+  elements.runNow.disabled = !node || node.active || !node.pipelineReady || inferenceUnavailable;
   elements.runNow.title = inferenceUnavailable
     ? "Run the full pipeline first to download base data."
     : "Start one execution using the shared settings.";
 }
 
 elements.runMode.addEventListener("change", updateRunAvailability);
+elements.executionNode.addEventListener("change", () => {
+  updateComputeOptions();
+  if (latestState) render(latestState);
+});
+document.querySelectorAll('input[name="node-role"]').forEach((input) => input.addEventListener("change", updateRoleFields));
+elements.saveNode.addEventListener("click", async () => {
+  elements.saveNode.disabled = true;
+  setMessage(elements.setupMessage, "Starting node services…");
+  try {
+    await api("/api/node/config", {
+      method: "PUT",
+      body: JSON.stringify({
+        role: document.querySelector('input[name="node-role"]:checked')?.value,
+        name: elements.nodeName.value,
+        serverModel: elements.serverModel.value,
+        config: [...document.querySelectorAll('input[name="node-config"]:checked')].map((input) => input.value),
+        masterUrl: elements.masterUrl.value,
+      }),
+    });
+    setMessage(elements.setupMessage, "Node configured.");
+    await refresh();
+  } catch (error) {
+    setMessage(elements.setupMessage, error.message, true);
+  } finally {
+    elements.saveNode.disabled = false;
+  }
+});
 elements.schedulePeriod.addEventListener("change", updateScheduleLimit);
 elements.refresh.addEventListener("click", refresh);
 elements.closeDialog.addEventListener("click", () => elements.logDialog.close());

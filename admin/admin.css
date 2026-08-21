@@ -15,6 +15,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
 body::before {
   content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .16;
@@ -60,7 +61,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .secondary-button, .quiet-button { border: 1px solid var(--line); background: rgba(102, 240, 182, .06); color: var(--text); padding: 10px 14px; }
 .quiet-button { color: var(--muted); background: transparent; padding: 7px 11px; }
 .execution-panel { margin-bottom: 14px; }
-.execution-fields { display: grid; grid-template-columns: minmax(240px, 1.4fr) repeat(3, 1fr); gap: 10px; margin-top: 22px; }
+.execution-fields { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 10px; margin-top: 22px; }
 .execution-fields label { display: grid; gap: 6px; }
 .execution-description { margin-bottom: 5px; }
 .base-data-status { margin: 0 0 14px !important; font-size: .78rem !important; }
@@ -116,10 +117,26 @@ dialog::backdrop { background: rgba(0,0,0,.7); backdrop-filter: blur(4px); }
 .dialog-summary { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 20px 0 0; color: var(--muted); font-size: .78rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
 
+.setup-panel { max-width: 1080px; margin: 20px auto; }
+.setup-panel code { color: var(--green); }
+.role-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 22px 0; }
+.role-picker > label { position: relative; cursor: pointer; }
+.role-picker input { position: absolute; opacity: 0; }
+.role-picker span { display: grid; gap: 5px; min-height: 92px; padding: 18px; border: 1px solid var(--line); border-radius: 13px; background: #091815; }
+.role-picker b { color: var(--text); font-size: 1rem; }
+.role-picker small { color: var(--muted); line-height: 1.45; }
+.role-picker input:checked + span { border-color: var(--green); background: rgba(102,240,182,.08); box-shadow: inset 0 0 0 1px rgba(102,240,182,.2); }
+.setup-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.setup-fields > label { display: grid; gap: 7px; }
+.config-picker { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 0; padding: 15px; border: 1px solid var(--line); border-radius: 11px; }
+.config-picker legend { padding: 0 7px; color: var(--muted); font-size: .75rem; }
+.config-picker label { color: var(--text); }
+.setup-actions { display: flex; align-items: center; gap: 18px; margin-top: 20px; }
+
 @media (max-width: 900px) {
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .execution-fields { grid-template-columns: 1fr 1fr; }
-  .execution-fields label:first-child { grid-column: 1 / -1; }
+  .execution-fields label:nth-child(2) { grid-column: 1 / -1; }
   .execution-toolbar { align-items: stretch; flex-direction: column; }
   .schedule-inline { justify-content: space-between; }
   .schedule-hint { text-align: left; }
@@ -131,7 +148,9 @@ dialog::backdrop { background: rgba(0,0,0,.7); backdrop-filter: blur(4px); }
   .metric-card { min-height: 116px; }
   .panel-heading { flex-direction: column; }
   .execution-fields { grid-template-columns: 1fr; }
-  .execution-fields label:first-child { grid-column: auto; }
+  .execution-fields label:nth-child(2) { grid-column: auto; }
+  .role-picker, .setup-fields { grid-template-columns: 1fr; }
+  .config-picker { grid-column: auto; }
   .schedule-inline { align-items: stretch; flex-direction: column; }
   .schedule-fields { grid-template-columns: 1fr 1fr; }
   .schedule-fields button { grid-column: 1 / -1; }

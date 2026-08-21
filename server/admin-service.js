@@ -23,6 +23,7 @@ function defaultState() {
       computeDevice: "cpu",
       steps: 8,
       namePrefix: "Forecast run",
+      nodeId: null,
       nextRunAt: null,
       updatedAt: null,
     },
@@ -249,7 +250,7 @@ function collectBody(request, maxBytes = 64 * 1024) {
 }
 
 class AdminService {
-  constructor({ projectRoot, publishRoot }) {
+  constructor({ projectRoot, publishRoot, onRunUpdated = null, onScheduleRun = null, onValidateSchedule = null, canSchedule = null, runMetadata = null }) {
     this.projectRoot = projectRoot;
     this.pipelineRoot = path.join(projectRoot, "pipeline");
     this.publishRoot = publishRoot;
@@ -270,6 +271,11 @@ class AdminService {
       run.name ||= defaultRunName(run.mode, run.trigger, run.startedAt || run.queuedAt);
     }
     this.activeProcess = null;
+    this.onRunUpdated = onRunUpdated;
+    this.onScheduleRun = onScheduleRun;
+    this.onValidateSchedule = onValidateSchedule;
+    this.canSchedule = canSchedule;
+    this.runMetadata = runMetadata;
     this._recoverInterruptedRuns();
     this.scheduleTimer = setInterval(() => this._tickSchedule(), 15_000);
     this.scheduleTimer.unref();
@@ -297,6 +303,30 @@ class AdminService {
   _save() {
     this.state.runs = this.state.runs.slice(0, MAX_RUNS);
     atomicWriteJson(this.statePath, this.state);
+  }
+
+  _notifyRunUpdated(run, finished = false) {
+    if (!this.onRunUpdated) return;
+    Promise.resolve(this.onRunUpdated(run, finished)).catch((error) => {
+      console.error(`Could not report pipeline execution: ${error.message}`);
+    });
+  }
+
+  setCallbacks({ onRunUpdated, onScheduleRun, onValidateSchedule, canSchedule, runMetadata } = {}) {
+    if (onRunUpdated !== undefined) this.onRunUpdated = onRunUpdated;
+    if (onScheduleRun !== undefined) this.onScheduleRun = onScheduleRun;
+    if (onValidateSchedule !== undefined) this.onValidateSchedule = onValidateSchedule;
+    if (canSchedule !== undefined) this.canSchedule = canSchedule;
+    if (runMetadata !== undefined) this.runMetadata = runMetadata;
+  }
+
+  upsertExternalRun(run) {
+    const existingIndex = this.state.runs.findIndex((candidate) => candidate.id === run.id);
+    const copy = JSON.parse(JSON.stringify(run));
+    if (existingIndex === -1) this.state.runs.unshift(copy);
+    else this.state.runs[existingIndex] = copy;
+    this._save();
+    return copy;
   }
 
   async status() {
@@ -373,12 +403,16 @@ class AdminService {
     if (pathname === "/api/admin/schedule" && request.method === "PUT") {
       try {
         this._assertSameOrigin(request);
-        const input = validateSchedule(await collectBody(request));
-        if (input.enabled && input.mode === "inference" && !findReusableBaseData(this.workDir, this.state.runs)) {
+        const body = await collectBody(request);
+        const input = validateSchedule(body);
+        if (this.onValidateSchedule) await this.onValidateSchedule(input, body);
+        else if (input.enabled && input.mode === "inference" && !findReusableBaseData(this.workDir, this.state.runs)) {
           throw new Error("An inference-only schedule requires base data from a previous full pipeline run.");
         }
         this.state.schedule = {
           ...input,
+          nodeId: typeof body.nodeId === "string" ? body.nodeId : null,
+          computeConfig: typeof body.computeConfig === "string" ? body.computeConfig : input.computeDevice,
           nextRunAt: input.enabled ? nextScheduledTime({ ...input, nextRunAt: null }) : null,
           updatedAt: new Date().toISOString(),
         };
@@ -415,18 +449,27 @@ class AdminService {
 
   _tickSchedule() {
     const schedule = this.state.schedule;
+    if (this.canSchedule && !this.canSchedule()) return;
     if (!schedule.enabled || !schedule.nextRunAt) return;
     if (Date.now() < new Date(schedule.nextRunAt).getTime()) return;
     schedule.nextRunAt = nextScheduledTime(schedule);
     this._save();
     if (!this.activeProcess) {
       try {
-        this.startRun("scheduled", {
+        const options = {
           mode: schedule.mode,
           computeDevice: schedule.computeDevice,
+          computeConfig: schedule.computeConfig,
+          nodeId: schedule.nodeId,
           steps: schedule.steps,
           name: scheduledRunName(schedule.namePrefix),
-        });
+        };
+        if (this.onScheduleRun) {
+          Promise.resolve(this.onScheduleRun("scheduled", options)).catch((error) => {
+            console.error(`Could not start scheduled pipeline: ${error.message}`);
+          });
+        }
+        else this.startRun("scheduled", options);
       } catch (error) {
         console.error(`Could not start scheduled pipeline: ${error.message}`);
       }
@@ -462,6 +505,7 @@ class AdminService {
       trigger,
       mode,
       computeDevice,
+      computeConfig: options.computeConfig || computeDevice,
       baseSourceRunId: reusableBaseData?.sourceRunId || null,
       status: "queued",
       stage: "starting",
@@ -485,6 +529,7 @@ class AdminService {
       error: null,
       logs: [],
       skippedStages: [],
+      ...(typeof this.runMetadata === "function" ? this.runMetadata() : this.runMetadata || {}),
     };
     const computeDescriptions = {
       cpu: "CPU (JAX platform: cpu)",
@@ -498,6 +543,7 @@ class AdminService {
     });
     this.state.runs.unshift(run);
     this._save();
+    this._notifyRunUpdated(run);
 
     const runner = path.join(this.pipelineRoot, "scripts", "run_admin_pipeline.py");
     const args = [
@@ -527,6 +573,7 @@ class AdminService {
     this.activeProcess = child;
     run.status = "running";
     this._save();
+    this._notifyRunUpdated(run);
     this._captureOutput(run, child.stdout, "stdout");
     this._captureOutput(run, child.stderr, "stderr");
     child.on("error", (error) => this._finishRun(run, 1, error));
@@ -553,6 +600,7 @@ class AdminService {
     run.logs.push({ at: new Date().toISOString(), source, message });
     if (run.logs.length > MAX_LOG_LINES) run.logs.splice(0, run.logs.length - MAX_LOG_LINES);
     this._save();
+    this._notifyRunUpdated(run);
   }
 
   _applyEvent(run, event) {
@@ -585,6 +633,7 @@ class AdminService {
       }
     }
     this._save();
+    this._notifyRunUpdated(run);
   }
 
   _finishRun(run, code, processError) {
@@ -601,6 +650,7 @@ class AdminService {
     }
     if (code === 0 && run.runDir) Object.assign(run, summarizeRunStorage(run.runDir));
     this._save();
+    this._notifyRunUpdated(run, true);
   }
 }
 

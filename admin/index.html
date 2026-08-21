@@ -5,19 +5,48 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#071210" />
   <title>Pipeline Control — Digital Twin Earth</title>
-  <link rel="stylesheet" href="/admin/admin.css?v=6" />
+  <link rel="stylesheet" href="/admin/admin.css?v=7" />
 </head>
 <body>
   <div class="aurora" aria-hidden="true"></div>
   <main class="shell">
     <header class="topbar">
       <div>
-        <a class="back-link" href="/">← Digital Twin Earth</a>
+        <a id="display-link" class="back-link" href="/">← Digital Twin Earth</a>
         <h1>Pipeline control</h1>
         <p class="lede">Operate and observe the ERA5T → Google GraphCast Small forecast pipeline.</p>
       </div>
       <div id="pipeline-status" class="status-pill"><span></span> Checking pipeline</div>
     </header>
+
+    <section id="node-setup" class="panel setup-panel" hidden>
+      <div class="panel-heading">
+        <div>
+          <span class="eyebrow">Server startup</span>
+          <h2>Configure this node</h2>
+          <p>Choose the role and hardware identity for this server process. This confirmation is required after every <code>npm start</code>.</p>
+        </div>
+      </div>
+      <div class="role-picker" role="radiogroup" aria-label="Node role">
+        <label><input type="radio" name="node-role" value="master" checked /><span><b>Master</b><small>Globe, iPad controller, pipeline control, and slave coordination</small></span></label>
+        <label><input type="radio" name="node-role" value="slave" /><span><b>Slave</b><small>Admin and pipeline execution only; reports to one master</small></span></label>
+      </div>
+      <div class="setup-fields">
+        <label for="node-name">Node name<input id="node-name" type="text" maxlength="60" autocomplete="off" /></label>
+        <label for="server-model">Server model<select id="server-model"><option>XE130c M8</option><option>XE150c M8</option></select></label>
+        <fieldset class="config-picker"><legend>Compute configuration</legend>
+          <label><input type="checkbox" name="node-config" value="cpu_12c" /> CPU 12c</label>
+          <label><input type="checkbox" name="node-config" value="cpu_20c" /> CPU 20c</label>
+          <label><input type="checkbox" name="node-config" value="cpu_32c" /> CPU 32c</label>
+          <label><input type="checkbox" name="node-config" value="gpu_amd" /> GPU AMD</label>
+          <label><input type="checkbox" name="node-config" value="gpu_l4" /> GPU Nvidia L4</label>
+        </fieldset>
+        <label id="master-url-field" for="master-url" hidden>Master server IP or URL<input id="master-url" type="text" placeholder="192.168.1.10:8080" autocomplete="off" /></label>
+      </div>
+      <div class="setup-actions"><button id="save-node" class="primary-button" type="button">Start this node</button><p id="setup-message" class="form-message" role="status"></p></div>
+    </section>
+
+    <div id="admin-dashboard" hidden>
 
     <section class="metric-grid" aria-label="Pipeline summary">
       <article class="metric-card accent">
@@ -26,9 +55,9 @@
         <small id="snapshot-detail">Scanning published snapshots…</small>
       </article>
       <article class="metric-card">
-        <span class="metric-label">Published runs</span>
-        <strong id="published-runs">—</strong>
-        <small id="published-total">— total artifacts</small>
+        <span class="metric-label">Node</span>
+        <strong id="current-node">—</strong>
+        <small id="current-node-detail">Waiting for configuration</small>
       </article>
       <article class="metric-card">
         <span class="metric-label">Last execution</span>
@@ -51,6 +80,9 @@
           </div>
         </div>
         <div class="execution-fields">
+          <label for="execution-node">Execution node
+            <select id="execution-node"></select>
+          </label>
           <label for="run-name">Execution name
             <input id="run-name" type="text" maxlength="70" value="Forecast run" autocomplete="off" />
           </label>
@@ -61,11 +93,7 @@
             </select>
           </label>
           <label for="compute-device">Compute
-            <select id="compute-device">
-              <option value="cpu" selected>CPU only</option>
-              <option value="gpu_l4">GPU · NVIDIA L4</option>
-              <option value="gpu_amd">GPU · AMD Radeon AI PRO R9700</option>
-            </select>
+            <select id="compute-device"></select>
           </label>
           <label for="forecast-steps">Forecast frames
             <select id="forecast-steps">
@@ -145,6 +173,7 @@
           <thead>
             <tr>
               <th>Name</th>
+              <th>Node</th>
               <th>Details</th>
               <th>Status</th>
               <th>Started</th>
@@ -161,6 +190,7 @@
         <div id="empty-history" class="empty-state">No pipeline executions have been recorded by this server yet.</div>
       </div>
     </section>
+    </div>
   </main>
 
   <dialog id="log-dialog">
@@ -175,6 +205,6 @@
     <pre id="dialog-log" class="log-view"></pre>
   </dialog>
 
-  <script src="/admin/admin.js?v=6"></script>
+  <script src="/admin/admin.js?v=7"></script>
 </body>
 </html>

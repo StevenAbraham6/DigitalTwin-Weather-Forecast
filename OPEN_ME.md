@@ -10,15 +10,24 @@ cd "/Users/stevenabraham/Documents/Digital Twin 2.0"
 npm install
 ```
 
-Then start the display and controller host:
+Then start the server:
 
 ```bash
 npm start
 ```
 
-Open `http://localhost:8080` on the presentation computer. The Node server
-replaces the prior static Python server because it serves both browser apps and
-routes their live WebSocket messages.
+Open `http://localhost:8080/admin/` and confirm whether this process is the
+master or a slave. This confirmation is required after every server start;
+the last node profile is retained to prefill the form.
+
+Choose **Master** for the presentation computer. The master serves the globe
+at `/`, the iPad controller, and the admin UI. Choose **Slave** for an execution
+worker. A slave serves only `/admin/`, redirects `/` there, and requires the
+master's IP address or URL. Every node also requires a unique display name, an
+XE130c M8 or XE150c M8 model, and one or more configured CPU/GPU options.
+
+The master accepts one to three registered slaves. All nodes must be able to
+reach each other's configured HTTP ports over the local network.
 
 ## iPad controller
 
@@ -45,16 +54,30 @@ If port 8080 is already occupied, stop the old server or choose another port:
 PORT=8090 npm start
 ```
 
-The terminal prints the corresponding local-network controller URL after the
-server starts.
+The terminal prints the corresponding local-network admin URL after the server
+starts. Once configured as master, the iPad controller remains available at
+`/controller/`.
 
 ## Pipeline administration
 
-Open `http://localhost:8080/admin/` to run the pipeline, configure a recurring
+Use `http://localhost:8080/admin/` to run the pipeline, configure a recurring
 schedule, review execution logs and stage timings, and inspect retained
 snapshot storage. Schedules are persisted under `pipeline/admin-data/` and
-resume whenever the Node server is running. Pipeline executions are serialized
-so a scheduled run cannot overlap an active manual run.
+resume whenever the node has been configured for the current server process.
+Pipeline executions are serialized per node so a scheduled run cannot overlap
+an active manual run on that node.
+
+On a master, the execution-node selector contains the master and connected
+slaves. Its compute choices are populated from the selected node's profile.
+The master dispatches remote runs, displays their live progress and logs, and
+combines every node's executions in one node-tagged history table. A slave can
+also run or schedule its own executions from its local admin page.
+
+Slaves report progress and completed execution records to the master. After a
+successful run they upload the forecast manifest and UI-surface snapshot files
+needed by the globe. Native NetCDF artifacts remain local to the execution
+node. On the master globe, the former weather-data selector is a node selector;
+choosing a node loads that node's latest transferred pipeline result.
 
 The shared execution form controls the name, full or inference-only mode,
 CPU, NVIDIA L4, or AMD Radeon AI PRO R9700 inference, and forecast-frame count for both **Run now**

@@ -7,6 +7,7 @@ const QRCode = require("qrcode");
 const { WebSocketServer, WebSocket } = require("ws");
 const { VERSION, ROLES } = require("../shared/protocol.js");
 const { AdminService } = require("./admin-service.js");
+const { ClusterService } = require("./cluster-service.js");
 
 const projectRoot = path.resolve(__dirname, "..");
 const port = Number(process.env.PORT) || 8080;
@@ -15,6 +16,7 @@ const maxMessageBytes = 32 * 1024;
 const sessions = new Map();
 const forecastPublishRoot = path.join(projectRoot, "pipeline", "output", "era5t-graphcast-small", "published");
 const adminService = new AdminService({ projectRoot, publishRoot: forecastPublishRoot });
+let clusterService;
 
 const mimeTypes = {
   ".bin": "application/octet-stream",
@@ -61,6 +63,14 @@ function publicBaseUrl(request) {
     : requestHost;
   return `${protocol}://${publicHost}`;
 }
+
+clusterService = new ClusterService({
+  projectRoot,
+  publishRoot: forecastPublishRoot,
+  adminService,
+  publicUrl: () => `http://${localAddress()}:${port}`,
+  dataRoot: process.env.CLUSTER_DATA_ROOT || null,
+});
 
 function makePairCode() {
   let code;
@@ -211,17 +221,21 @@ function safeFilePath(urlPath) {
       ? forecastPath
       : null;
   }
+  if (pathname === "/node-forecasts" || pathname.startsWith("/node-forecasts/")) {
+    return clusterService.resolveForecastPath(pathname);
+  }
   const filePath = path.resolve(projectRoot, `.${pathname}`);
   return filePath === projectRoot || filePath.startsWith(`${projectRoot}${path.sep}`) ? filePath : null;
 }
 
-function cacheControl(filePath) {
+function cacheControl(filePath, pathname = "") {
   const relativePath = path.relative(projectRoot, filePath).split(path.sep).join("/");
   const forecastRelativePath = path.relative(forecastPublishRoot, filePath).split(path.sep).join("/");
   const isMutableForecastIndex = forecastRelativePath === "catalog.json"
     || /(^|\/)latest\/manifest\.json$/.test(forecastRelativePath);
   const isAdminAsset = relativePath === "admin" || relativePath.startsWith("admin/");
-  return filePath.endsWith(".html") || isMutableForecastIndex || isAdminAsset
+  const isMutableNodeForecastIndex = pathname.endsWith("/catalog.json") || /\/latest\/manifest\.json$/.test(pathname);
+  return filePath.endsWith(".html") || isMutableForecastIndex || isMutableNodeForecastIndex || isAdminAsset
     ? "no-cache"
     : "public, max-age=300";
 }
@@ -239,6 +253,7 @@ const server = http.createServer(async (request, response) => {
     return;
   }
   try {
+    if (pathname.startsWith("/api/") && await clusterService.handleRequest(request, response, pathname)) return;
     if (pathname.startsWith("/api/admin/") && await adminService.handleRequest(request, response, pathname)) return;
   } catch (error) {
     console.error(`Admin API error: ${error.message}`);
@@ -248,6 +263,14 @@ const server = http.createServer(async (request, response) => {
   if (!["GET", "HEAD"].includes(request.method)) {
     response.writeHead(405).end("Method not allowed");
     return;
+  }
+  if (!clusterService.isMaster()) {
+    const isAdminAsset = pathname === "/admin" || pathname.startsWith("/admin/");
+    if (!isAdminAsset) {
+      if (pathname === "/") response.writeHead(302, { Location: "/admin/", "Cache-Control": "no-store" }).end();
+      else response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("This node provides the admin service only.");
+      return;
+    }
   }
   const filePath = safeFilePath(pathname);
   if (!filePath) {
@@ -262,7 +285,7 @@ const server = http.createServer(async (request, response) => {
     const headers = {
       "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream",
       "Content-Length": stat.size,
-      "Cache-Control": cacheControl(filePath),
+      "Cache-Control": cacheControl(filePath, pathname),
       "X-Content-Type-Options": "nosniff",
     };
     response.writeHead(200, headers);
@@ -276,6 +299,10 @@ websocketServer.on("error", (error) => {
   if (error.code !== "EADDRINUSE") console.error(`WebSocket server error: ${error.message}`);
 });
 websocketServer.on("connection", (socket, request) => {
+  if (!clusterService.isMaster()) {
+    socket.close(1008, "Display service is available on master nodes only");
+    return;
+  }
   socket.isAlive = true;
   socket.on("pong", () => { socket.isAlive = true; });
   socket.on("message", (data, isBinary) => handleSocketMessage(socket, request, data, isBinary));
@@ -296,8 +323,8 @@ const heartbeat = setInterval(() => {
 
 server.listen(port, host, () => {
   const lanUrl = `http://${localAddress()}:${port}`;
-  console.log(`Digital Twin Earth display: http://localhost:${port}`);
-  console.log(`iPad controller: ${lanUrl}/controller/`);
+  console.log(`Choose master or slave mode: http://localhost:${port}/admin/`);
+  console.log(`LAN admin: ${lanUrl}/admin/`);
 });
 
 server.on("error", (error) => {
@@ -309,6 +336,7 @@ server.on("error", (error) => {
 
 function shutdown() {
   clearInterval(heartbeat);
+  clusterService.close();
   adminService.close();
   websocketServer.clients.forEach((socket) => socket.terminate());
   websocketServer.close(() => server.close(() => process.exit(0)));

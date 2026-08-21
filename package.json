@@ -5,10 +5,11 @@
   "description": "Digital Twin Earth display and local iPad controller",
   "scripts": {
     "start": "node server/server.js",
-    "check": "node --check server/server.js && node --check server/admin-service.js && node --check admin/admin.js && node --check shared/protocol.js && node --check shared/forecast-binary.js && node --check main.js && node --check controller/controller.js && node --check scripts/forecast-binary-test.js",
-    "test": "npm run check && npm run test:forecast-binary && npm run test:admin",
+    "check": "node --check server/server.js && node --check server/admin-service.js && node --check server/cluster-service.js && node --check admin/admin.js && node --check shared/protocol.js && node --check shared/forecast-binary.js && node --check main.js && node --check controller/controller.js && node --check scripts/forecast-binary-test.js",
+    "test": "npm run check && npm run test:forecast-binary && npm run test:admin && npm run test:cluster",
     "test:forecast-binary": "node scripts/forecast-binary-test.js",
     "test:admin": "node scripts/admin-service-test.js",
+    "test:cluster": "node scripts/cluster-service-test.js",
     "pipeline:setup": "python3.11 -m venv pipeline/.venv && pipeline/.venv/bin/python -m pip install --upgrade pip && pipeline/.venv/bin/python -m pip install -e 'pipeline[graphcast,cpu,era5,dev]'",
     "pipeline:setup:amd": "python3.12 -m venv pipeline/.venv-amd && pipeline/.venv-amd/bin/python -m pip install --upgrade pip && pipeline/.venv-amd/bin/python -m pip install -e 'pipeline[graphcast,era5,dev]' && pipeline/.venv-amd/bin/python pipeline/scripts/setup_amd_jax.py",
     "pipeline:test": "pipeline/.venv/bin/python -m pytest pipeline/tests",
