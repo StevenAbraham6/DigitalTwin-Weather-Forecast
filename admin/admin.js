@@ -57,7 +57,7 @@ const configLabels = {
   cpu_12c: "CPU 12c",
   cpu_20c: "CPU 20c",
   cpu_32c: "CPU 32c",
-  gpu_amd: "GPU AMD",
+  gpu_amd: "GPU AMD Radeon AI PRO R9700",
   gpu_l4: "GPU Nvidia L4",
 };
 
@@ -272,6 +272,9 @@ function renderHistory(runs) {
     });
     nameCell.append(nameInput);
     row.append(nameCell);
+    const computeCell = document.createElement("td");
+    computeCell.textContent = computeLabel(run.computeConfig || run.computeDevice);
+    row.append(computeCell);
     const nodeCell = document.createElement("td");
     nodeCell.textContent = run.nodeName || "Local node";
     row.append(nodeCell);
@@ -285,13 +288,12 @@ function renderHistory(runs) {
     row.append(actions);
     const values = [
       { text: run.status, className: `run-status ${run.status}` },
-      { text: formatDate(run.startedAt) },
       { text: formatDuration(run.durationMs) },
       { text: run.mode === "inference" ? "Reused" : formatDuration(run.downloadDurationMs) },
       { text: formatDuration(run.inferenceDurationMs) },
-      { text: run.snapshotBytes == null ? "—" : `${formatBytes(run.snapshotBytes)} · ${run.snapshotCount}` },
+      { text: run.snapshotCount == null ? "—" : run.snapshotCount.toLocaleString() },
       { text: `${capitalize(run.trigger)} · ${run.mode === "inference" ? "Inference only" : "Full pipeline"}` },
-      { text: computeLabel(run.computeConfig || run.computeDevice) },
+      { text: formatDate(run.startedAt) },
     ];
     for (const value of values) {
       const cell = document.createElement("td");
@@ -345,7 +347,7 @@ function showRun(run) {
       ? `Backend ${run.inferenceBackend.toUpperCase()}${run.inferenceDevice ? ` · ${run.inferenceDevice}` : ""}`
       : null,
     `Publish ${formatDuration(run.publishDurationMs)}`,
-    `${formatBytes(run.snapshotBytes)} snapshots`,
+    `${run.snapshotCount == null ? "—" : run.snapshotCount.toLocaleString()} snapshots`,
     `${formatBytes(run.artifactBytes)} total artifacts`,
   ];
   for (const timing of run.inferenceTimings || []) {

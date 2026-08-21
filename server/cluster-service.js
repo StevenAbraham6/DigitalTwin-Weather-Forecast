@@ -8,7 +8,7 @@ const CONFIG_LABELS = {
   cpu_12c: "CPU 12c",
   cpu_20c: "CPU 20c",
   cpu_32c: "CPU 32c",
-  gpu_amd: "GPU AMD",
+  gpu_amd: "GPU AMD Radeon AI PRO R9700",
   gpu_l4: "GPU Nvidia L4",
 };
 const MAX_SLAVES = 3;

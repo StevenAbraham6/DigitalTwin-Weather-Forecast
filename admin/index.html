@@ -38,7 +38,7 @@
           <label><input type="checkbox" name="node-config" value="cpu_12c" /> CPU 12c</label>
           <label><input type="checkbox" name="node-config" value="cpu_20c" /> CPU 20c</label>
           <label><input type="checkbox" name="node-config" value="cpu_32c" /> CPU 32c</label>
-          <label><input type="checkbox" name="node-config" value="gpu_amd" /> GPU AMD</label>
+          <label><input type="checkbox" name="node-config" value="gpu_amd" /> GPU AMD Radeon AI PRO R9700</label>
           <label><input type="checkbox" name="node-config" value="gpu_l4" /> GPU Nvidia L4</label>
         </fieldset>
         <label id="master-url-field" for="master-url" hidden>Master server IP or URL<input id="master-url" type="text" placeholder="192.168.1.10:8080" autocomplete="off" /></label>
@@ -105,7 +105,6 @@
             </select>
           </label>
         </div>
-        <p class="execution-description">A full pipeline downloads the latest ERA5T state. Inference only reuses the most recent downloaded and prepared base data. CPU forces JAX onto the processors; NVIDIA L4 uses CUDA and AMD Radeon AI PRO R9700 uses ROCm. GPU selections fail instead of silently falling back to CPU.</p>
         <p id="reusable-data" class="base-data-status">Checking for reusable base data…</p>
       </div>
 
@@ -173,16 +172,16 @@
           <thead>
             <tr>
               <th>Name</th>
+              <th>Compute</th>
               <th>Node</th>
               <th>Details</th>
               <th>Status</th>
-              <th>Started</th>
               <th>Total</th>
               <th>Download</th>
               <th>Inference</th>
               <th>Snapshots</th>
               <th>Run type</th>
-              <th>Compute</th>
+              <th>Date &amp; time</th>
             </tr>
           </thead>
           <tbody id="run-history"></tbody>
