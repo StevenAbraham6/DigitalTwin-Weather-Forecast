@@ -67,10 +67,15 @@ through T+48:
 
 ```bash
 pipeline/.venv/bin/python pipeline/scripts/run_admin_pipeline.py \
-  --mode full --execution-id manual-001 --steps 8 \
+  --mode full --compute-device cpu --execution-id manual-001 --steps 8 \
   --work-dir pipeline/output/era5t-graphcast-small \
   --publish-dir pipeline/output/era5t-graphcast-small/published
 ```
+
+`--compute-device` accepts `cpu`, `gpu_l4` (NVIDIA CUDA), or `gpu_amd`
+(AMD Radeon AI PRO R9700 via ROCm). Install `pipeline[gpu]` for the pinned L4
+CUDA backend or `pipeline[amd-gpu]` after installing a compatible ROCm 7 runtime.
+The requested target and the selected JAX backend/device are written to the run log.
 
 The finished `.bin` snapshots are published under
 `pipeline/output/era5t-graphcast-small/published/`. The Node server exposes this

@@ -21,7 +21,7 @@ graphcast = [
   "jupyter>=1.0", "nbclient>=0.10", "nbformat>=5.10",
   "shapely>=2.0", "cartopy>=0.22", "google-cloud-storage>=2.14",
   "ipywidgets>=8", "matplotlib>=3.8",
-  "jax>=0.4.25,<0.5", "jaxlib>=0.4.25,<0.5", "chex>=0.1.86,<0.1.90", "zarr<3",
+  "jax>=0.4.25,<0.9", "jaxlib>=0.4.25,<0.9", "chex>=0.1.86,<0.2", "zarr<3",
   # Runtime imports used by the pinned GraphCast source checkout. Installing
   # WeatherNext itself is intentionally avoided because its latest release now
   # requires Python 3.12 while this tested pipeline runs on Python 3.11.
@@ -32,8 +32,10 @@ graphcast = [
 # They are intentionally not required by the existing sample-data pipeline.
 hres = ["ecmwf-opendata>=0.3", "cfgrib>=0.9.11", "eccodes>=1.7"]
 era5 = ["cdsapi>=0.7"]
-# Install explicitly on NVIDIA Linux hosts; CPU remains the portable default.
+# Install explicitly on GPU Linux hosts; CPU remains the portable default.
 gpu = ["jax[cuda12]==0.4.38; sys_platform == 'linux'"]
+# ROCm itself must already be installed and compatible with the host driver.
+amd-gpu = ["jax[rocm7-local]==0.8.2; sys_platform == 'linux'"]
 dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
 
 [project.scripts]

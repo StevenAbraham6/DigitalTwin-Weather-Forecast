@@ -57,7 +57,7 @@ resume whenever the Node server is running. Pipeline executions are serialized
 so a scheduled run cannot overlap an active manual run.
 
 The shared execution form controls the name, full or inference-only mode,
-CPU-only or NVIDIA GPU inference, and forecast-frame count for both **Run now**
+CPU, NVIDIA L4, or AMD Radeon AI PRO R9700 inference, and forecast-frame count for both **Run now**
 and recurring schedules. A full run
 downloads and prepares the latest base data; inference-only reuses the most
 recent prepared ERA5T base state and skips those stages. Inference-only remains
@@ -65,14 +65,22 @@ unavailable until reusable base data exists. Schedules additionally store their
 frequency and enabled state, and append a timestamp to the shared name.
 
 CPU is the portable default. On an NVIDIA Linux server, install the pinned CUDA
-12 JAX backend before selecting GPU in the form:
+12 JAX backend before selecting **GPU · NVIDIA L4** in the form:
 
 ```bash
 pipeline/.venv/bin/python -m pip install -e 'pipeline[gpu]'
 ```
 
-GPU selection is strict: if CUDA-enabled JAX cannot initialize, the execution
-fails and records the backend error instead of silently falling back to CPU.
+On an AMD Radeon AI PRO R9700 Linux server, install a compatible ROCm 7 runtime,
+then install the ROCm JAX plugin before selecting **GPU · AMD Radeon AI PRO R9700**:
+
+```bash
+pipeline/.venv/bin/python -m pip install -e 'pipeline[amd-gpu]'
+```
+
+GPU selection is strict: if the selected CUDA or ROCm JAX backend cannot
+initialize, the execution fails and records the requested target, JAX platform,
+actual backend, device name, and backend error instead of silently using CPU.
 
 Install the project-local Python environment once before the first run:
 

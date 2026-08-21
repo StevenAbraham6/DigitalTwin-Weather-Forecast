@@ -276,7 +276,11 @@ function logText(logs = []) {
 }
 
 function capitalize(value = "") { return value.charAt(0).toUpperCase() + value.slice(1); }
-function computeLabel(value) { return value === "gpu" ? "GPU · CUDA" : "CPU only"; }
+function computeLabel(value) {
+  if (value === "gpu" || value === "gpu_l4") return "GPU · NVIDIA L4";
+  if (value === "gpu_amd") return "GPU · AMD Radeon AI PRO R9700";
+  return "CPU only";
+}
 
 async function startRun() {
   const mode = elements.runMode.value;

@@ -14,7 +14,7 @@ const PERIOD_MS = {
 
 function defaultState() {
   return {
-    version: 5,
+    version: 6,
     schedule: {
       enabled: false,
       runsPerPeriod: 1,
@@ -60,9 +60,9 @@ function validateRunMode(value) {
 }
 
 function validateComputeDevice(value) {
-  const computeDevice = value ?? "cpu";
-  if (computeDevice !== "cpu" && computeDevice !== "gpu") {
-    throw new Error("Compute device must be cpu or gpu.");
+  const computeDevice = value === "gpu" ? "gpu_l4" : value ?? "cpu";
+  if (!["cpu", "gpu_l4", "gpu_amd"].includes(computeDevice)) {
+    throw new Error("Compute device must be cpu, gpu_l4, or gpu_amd.");
   }
   return computeDevice;
 }
@@ -259,13 +259,14 @@ class AdminService {
     this.state = {
       ...defaultState(),
       ...loadedState,
-      version: 4,
+      version: 6,
       schedule: { ...defaultState().schedule, ...loadedState.schedule },
       runs: Array.isArray(loadedState.runs) ? loadedState.runs : [],
     };
+    this.state.schedule.computeDevice = validateComputeDevice(this.state.schedule.computeDevice);
     for (const run of this.state.runs) {
       run.mode ||= "full";
-      run.computeDevice ||= "cpu";
+      run.computeDevice = validateComputeDevice(run.computeDevice);
       run.name ||= defaultRunName(run.mode, run.trigger, run.startedAt || run.queuedAt);
     }
     this.activeProcess = null;
@@ -478,6 +479,16 @@ class AdminService {
       logs: [],
       skippedStages: [],
     };
+    const computeDescriptions = {
+      cpu: "CPU (JAX platform: cpu)",
+      gpu_l4: "GPU L4 (JAX platform: cuda)",
+      gpu_amd: "GPU AMD Radeon AI PRO R9700 (JAX platform: rocm)",
+    };
+    run.logs.push({
+      at: now,
+      source: "stdout",
+      message: `Compute target: ${computeDescriptions[computeDevice]}`,
+    });
     this.state.runs.unshift(run);
     this._save();
 

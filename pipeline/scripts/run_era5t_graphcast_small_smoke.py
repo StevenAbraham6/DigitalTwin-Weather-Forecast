@@ -62,20 +62,47 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=1, help="Number of six-hour forecast intervals.")
-    parser.add_argument("--compute-device", choices=("auto", "cpu", "gpu"), default="auto")
+    parser.add_argument(
+        "--compute-device",
+        choices=("auto", "cpu", "gpu_l4", "gpu_amd"),
+        default="auto",
+    )
     args = parser.parse_args()
     sys.path.insert(0, str(args.upstream))
-    from graphcast import autoregressive, casting, checkpoint, data_utils, graphcast, normalization, xarray_jax
+    from graphcast import (
+        autoregressive,
+        casting,
+        checkpoint,
+        data_utils,
+        graphcast,
+        normalization,
+        xarray_jax,
+    )
 
     if args.steps < 1:
         raise ValueError("--steps must be positive")
     actual_backend = jax.default_backend()
-    if args.compute_device != "auto" and actual_backend != args.compute_device:
+    expected_backends = {
+        "cpu": {"cpu"},
+        "gpu_l4": {"gpu", "cuda"},
+        "gpu_amd": {"gpu", "rocm"},
+    }
+    if (
+        args.compute_device != "auto"
+        and actual_backend not in expected_backends[args.compute_device]
+    ):
         raise RuntimeError(
             f"Requested {args.compute_device.upper()} inference but JAX selected "
             f"{actual_backend.upper()}. Check the installed JAX backend."
         )
     devices = ", ".join(getattr(device, "device_kind", str(device)) for device in jax.devices())
+    requested_target = {
+        "auto": "Automatic",
+        "cpu": "CPU",
+        "gpu_l4": "NVIDIA L4 (CUDA)",
+        "gpu_amd": "AMD Radeon AI PRO R9700 (ROCm)",
+    }[args.compute_device]
+    print(f"Requested compute target: {requested_target}", flush=True)
     print(f"JAX inference backend: {actual_backend.upper()} · {devices}", flush=True)
     emit({"type": "metadata", "inferenceBackend": actual_backend, "inferenceDevice": devices})
     emit_timing("processSetup", "Process and device setup", PROCESS_STARTED)
