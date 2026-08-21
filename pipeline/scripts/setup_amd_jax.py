@@ -5,15 +5,37 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import platform
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 JAX_VERSION = "0.8.2"
-ROCM_PACKAGES = ("jax-rocm7-pjrt", "jax-rocm7-plugin")
+ROCM_PACKAGES = ("jaxlib", "jax-rocm7-pjrt", "jax-rocm7-plugin")
 
 
 def run_pip(*arguments: str) -> None:
     subprocess.run([sys.executable, "-m", "pip", *arguments], check=True)
+
+
+def rocm_release() -> str:
+    override = os.environ.get("ROCM_JAX_RELEASE")
+    if override:
+        return override
+    for version_file in (Path("/opt/rocm/.info/version"), Path("/opt/rocm/.info/version-dev")):
+        try:
+            installed = version_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r"\b(7\.2\.\d+)\b", installed)
+        if match:
+            return match.group(1)
+    print(
+        "Could not detect the ROCm patch release; using ROCm 7.2.4 wheels. "
+        "Set ROCM_JAX_RELEASE if the installed 7.2 release differs.",
+        flush=True,
+    )
+    return "7.2.4"
 
 
 def main() -> None:
@@ -23,12 +45,18 @@ def main() -> None:
     if python_tag not in {"cp311", "cp312"}:
         raise SystemExit("AMD JAX setup supports Python 3.11 or 3.12.")
 
-    jaxlib_wheel = (
-        "https://github.com/ROCm/rocm-jax/releases/download/rocm-jax-v0.8.2/"
-        f"jaxlib-0.8.2%2Brocm7-{python_tag}-{python_tag}-"
-        "manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+    rocm_version = rocm_release()
+    if not re.fullmatch(r"7\.2\.\d+", rocm_version):
+        raise SystemExit(
+            f"ROCm {rocm_version} is not supported by this installer; install ROCm 7.2.x first."
+        )
+    amd_wheelhouse = (
+        f"https://repo.radeon.com/rocm/manylinux/rocm-rel-{rocm_version}/"
     )
-    print("Replacing JAX packages with the matched ROCm 7 / JAX 0.8.2 stack...", flush=True)
+    print(
+        f"Replacing JAX packages with ROCm {rocm_version} / JAX {JAX_VERSION}...",
+        flush=True,
+    )
     run_pip(
         "uninstall",
         "-y",
@@ -37,9 +65,14 @@ def main() -> None:
         "jax-rocm7-plugin",
         "jax-rocm7-pjrt",
     )
-    for package in ROCM_PACKAGES:
-        run_pip("install", "--no-deps", f"{package}=={JAX_VERSION}")
-    run_pip("install", "--no-deps", jaxlib_wheel)
+    run_pip(
+        "install",
+        "--no-deps",
+        "--no-index",
+        "--find-links",
+        amd_wheelhouse,
+        *(f"{package}=={JAX_VERSION}" for package in ROCM_PACKAGES),
+    )
     run_pip("install", "--no-deps", f"jax=={JAX_VERSION}")
 
     installed = {
