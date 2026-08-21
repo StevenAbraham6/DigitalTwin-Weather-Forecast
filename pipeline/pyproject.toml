@@ -10,7 +10,7 @@ requires-python = ">=3.10,<3.13"
 dependencies = [
   # WeatherNext's current GraphCast demo is not compatible with the 2026
   # Xarray/Pandas time-coordinate APIs. Keep a tested scientific stack.
-  "numpy>=1.26,<2", "pandas>=2.1,<2.3", "xarray>=2024.1,<2025.1", "netCDF4>=1.6",
+  "numpy>=1.26,<3", "pandas>=2.1,<2.3", "xarray>=2024.1,<2025.1", "netCDF4>=1.6",
   "pydantic>=2.6", "typer>=0.12", "PyYAML>=6", "platformdirs>=4",
 ]
 
@@ -33,9 +33,10 @@ graphcast = [
 hres = ["ecmwf-opendata>=0.3", "cfgrib>=0.9.11", "eccodes>=1.7"]
 era5 = ["cdsapi>=0.7"]
 # Install explicitly on GPU Linux hosts; CPU remains the portable default.
+cpu = ["numpy<2", "jax==0.4.38", "jaxlib==0.4.38"]
 gpu = ["jax[cuda12]==0.4.38; sys_platform == 'linux'"]
-# ROCm itself must already be installed and compatible with the host driver.
-amd-gpu = ["jax[rocm7-local]==0.8.2; sys_platform == 'linux'"]
+# Use `npm run pipeline:setup:amd` so the ROCm plugin, PJRT, JAX, and the
+# ROCm-specific jaxlib wheel are replaced together in AMD's required order.
 dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
 
 [project.scripts]

@@ -323,7 +323,11 @@ class AdminService {
     };
   }
 
-  _pythonCommand() {
+  _pythonCommand(computeDevice = "cpu") {
+    if (computeDevice === "gpu_amd") {
+      return process.env.PIPELINE_AMD_PYTHON
+        || path.join(this.pipelineRoot, ".venv-amd", "bin", "python");
+    }
     return process.env.PIPELINE_PYTHON || path.join(this.pipelineRoot, ".venv", "bin", "python");
   }
 
@@ -435,14 +439,17 @@ class AdminService {
       error.code = "RUN_ACTIVE";
       throw error;
     }
-    const python = this._pythonCommand();
+    const computeDevice = validateComputeDevice(options.computeDevice);
+    const python = this._pythonCommand(computeDevice);
     if (!fs.existsSync(python)) {
-      throw new Error("Pipeline environment is not installed. Run npm run pipeline:setup first.");
+      const setupCommand = computeDevice === "gpu_amd"
+        ? "npm run pipeline:setup:amd"
+        : "npm run pipeline:setup";
+      throw new Error(`Pipeline environment is not installed. Run ${setupCommand} first.`);
     }
     const steps = validateForecastSteps(options.steps);
     const now = new Date().toISOString();
     const mode = validateRunMode(options.mode);
-    const computeDevice = validateComputeDevice(options.computeDevice);
     const reusableBaseData = mode === "inference" ? findReusableBaseData(this.workDir, this.state.runs) : null;
     if (mode === "inference" && !reusableBaseData) {
       const error = new Error("Inference-only requires base data from a previous full pipeline run.");

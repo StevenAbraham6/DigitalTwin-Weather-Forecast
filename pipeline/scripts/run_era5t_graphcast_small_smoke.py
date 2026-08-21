@@ -9,6 +9,7 @@ PROCESS_STARTED = time.monotonic()
 import argparse
 import dataclasses
 import functools
+import importlib.metadata
 import json
 import sys
 from pathlib import Path
@@ -56,6 +57,18 @@ def transfer_to_host(dataset: xr.Dataset, xarray_jax: object) -> xr.Dataset:
     return materialized
 
 
+def jax_package_versions() -> str:
+    packages = ("jax", "jaxlib", "jax-rocm7-plugin", "jax-rocm7-pjrt")
+    versions = []
+    for package in packages:
+        try:
+            version = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            version = "not installed"
+        versions.append(f"{package}={version}")
+    return ", ".join(versions)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, required=True)
@@ -81,7 +94,17 @@ def main() -> None:
 
     if args.steps < 1:
         raise ValueError("--steps must be positive")
-    actual_backend = jax.default_backend()
+    print(f"Installed JAX packages: {jax_package_versions()}", flush=True)
+    try:
+        actual_backend = jax.default_backend()
+    except Exception as error:
+        if args.compute_device == "gpu_amd":
+            raise RuntimeError(
+                "ROCm JAX could not initialize. The JAX, jaxlib, ROCm plugin, and PJRT "
+                "versions must match. Run `npm run pipeline:setup:amd`, then retry. "
+                f"Backend error: {error}"
+            ) from None
+        raise
     expected_backends = {
         "cpu": {"cpu"},
         "gpu_l4": {"gpu", "cuda"},

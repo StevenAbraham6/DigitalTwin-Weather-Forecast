@@ -142,6 +142,15 @@ async function main() {
     fs.writeFileSync(fakePython, "");
     const service = new AdminService({ projectRoot: emptyProject, publishRoot: path.join(emptyProject, "forecasts") });
     try {
+      assert.equal(service._pythonCommand("cpu"), fakePython);
+      assert.equal(
+        service._pythonCommand("gpu_amd"),
+        path.join(emptyProject, "pipeline", ".venv-amd", "bin", "python"),
+      );
+      assert.throws(
+        () => service.startRun("manual", { mode: "full", computeDevice: "gpu_amd", steps: 8 }),
+        /npm run pipeline:setup:amd/,
+      );
       const timingRun = { inferenceTimings: [] };
       service._applyEvent(timingRun, {
         type: "inference_timing",

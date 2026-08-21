@@ -15,7 +15,7 @@ source pipeline/.venv/bin/activate
 If an earlier install was already created, refresh its demo dependencies once:
 
 ```bash
-python -m pip install -e 'pipeline[graphcast,era5,dev]'
+python -m pip install -e 'pipeline[graphcast,cpu,era5,dev]'
 ```
 
 Run the official GraphCast Small demo and retain its prediction plus initialization state (the first run downloads the official source and artifacts to `~/.cache/forecast-engine`; nothing is committed):
@@ -74,7 +74,8 @@ pipeline/.venv/bin/python pipeline/scripts/run_admin_pipeline.py \
 
 `--compute-device` accepts `cpu`, `gpu_l4` (NVIDIA CUDA), or `gpu_amd`
 (AMD Radeon AI PRO R9700 via ROCm). Install `pipeline[gpu]` for the pinned L4
-CUDA backend or `pipeline[amd-gpu]` after installing a compatible ROCm 7 runtime.
+CUDA backend. After installing a compatible ROCm 7 runtime, run
+`npm run pipeline:setup:amd` to install the matched AMD JAX stack.
 The requested target and the selected JAX backend/device are written to the run log.
 
 The finished `.bin` snapshots are published under

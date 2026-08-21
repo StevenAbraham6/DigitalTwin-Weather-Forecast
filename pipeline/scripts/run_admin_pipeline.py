@@ -151,29 +151,36 @@ def main() -> None:
         "gpu_amd": "rocm",
     }[args.compute_device]
     inference_environment["JAX_PLATFORMS"] = jax_platform
+    if args.compute_device == "gpu_amd":
+        inference_environment.setdefault("LLVM_PATH", "/opt/rocm/llvm")
     print(
         f"Requested compute target: {args.compute_device} · JAX platform: {jax_platform}",
         flush=True,
     )
     with stage("inference"):
-        subprocess.run(
-            [
-                sys.executable,
-                str(inference_runner),
-                "--steps",
-                str(args.steps),
-                "--compute-device",
-                args.compute_device,
-                "--input",
-                str(prepared),
-                "--output",
-                str(native),
-                "--upstream",
-                str(args.upstream),
-            ],
-            check=True,
-            env=inference_environment,
-        )
+        try:
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(inference_runner),
+                    "--steps",
+                    str(args.steps),
+                    "--compute-device",
+                    args.compute_device,
+                    "--input",
+                    str(prepared),
+                    "--output",
+                    str(native),
+                    "--upstream",
+                    str(args.upstream),
+                ],
+                check=True,
+                env=inference_environment,
+            )
+        except subprocess.CalledProcessError as error:
+            raise SystemExit(
+                f"Inference process failed for {args.compute_device} (exit {error.returncode})."
+            ) from None
 
     run_id = (
         f"{initialization.strftime('%Y-%m-%dT%H-%M-%SZ')}"

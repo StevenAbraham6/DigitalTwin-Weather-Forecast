@@ -71,11 +71,12 @@ CPU is the portable default. On an NVIDIA Linux server, install the pinned CUDA
 pipeline/.venv/bin/python -m pip install -e 'pipeline[gpu]'
 ```
 
-On an AMD Radeon AI PRO R9700 Linux server, install a compatible ROCm 7 runtime,
-then install the ROCm JAX plugin before selecting **GPU · AMD Radeon AI PRO R9700**:
+On an AMD Radeon AI PRO R9700 Linux server, install a compatible ROCm 7 runtime.
+After the regular pipeline setup, replace the CPU JAX packages with the matched
+ROCm JAX stack before selecting **GPU · AMD Radeon AI PRO R9700**:
 
 ```bash
-pipeline/.venv/bin/python -m pip install -e 'pipeline[amd-gpu]'
+npm run pipeline:setup:amd
 ```
 
 GPU selection is strict: if the selected CUDA or ROCm JAX backend cannot
