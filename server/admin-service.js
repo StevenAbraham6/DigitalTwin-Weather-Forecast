@@ -271,6 +271,8 @@ class AdminService {
       run.name ||= defaultRunName(run.mode, run.trigger, run.startedAt || run.queuedAt);
     }
     this.activeProcess = null;
+    this.activeRunId = null;
+    this.cancelTimer = null;
     this.onRunUpdated = onRunUpdated;
     this.onScheduleRun = onScheduleRun;
     this.onValidateSchedule = onValidateSchedule;
@@ -283,13 +285,14 @@ class AdminService {
 
   close() {
     clearInterval(this.scheduleTimer);
+    if (this.cancelTimer) clearTimeout(this.cancelTimer);
   }
 
   _recoverInterruptedRuns() {
     const endedAt = new Date().toISOString();
     let changed = false;
     for (const run of this.state.runs) {
-      if (run.status === "running" || run.status === "queued") {
+      if (run.status === "running") {
         run.status = "failed";
         run.endedAt = endedAt;
         run.durationMs = durationMs(run.startedAt || run.queuedAt, endedAt);
@@ -332,7 +335,8 @@ class AdminService {
   async status() {
     const storage = await directoryStats(this.publishRoot);
     const python = this._pythonCommand();
-    const current = this.state.runs.find((run) => run.status === "running" || run.status === "queued") || null;
+    const activeRuns = this.state.runs.filter((run) => run.status === "running" || run.status === "queued");
+    const current = activeRuns[0] || null;
     const reusableBaseData = findReusableBaseData(this.workDir, this.state.runs);
     return {
       serverTime: new Date().toISOString(),
@@ -349,6 +353,7 @@ class AdminService {
       schedule: this.state.schedule,
       storage,
       currentRun: current,
+      activeRuns,
       runs: this.state.runs,
     };
   }
@@ -370,15 +375,38 @@ class AdminService {
       try {
         this._assertSameOrigin(request);
         const body = await collectBody(request);
-        const run = this.startRun("manual", {
+        const options = {
           steps: body.steps,
           mode: body.mode,
           computeDevice: body.computeDevice,
           name: body.name,
-        });
+        };
+        const run = body.queueOnly ? this.queueRun("manual", options) : this.startRun("manual", options);
         this._sendJson(response, 202, { run });
       } catch (error) {
         this._sendJson(response, ["RUN_ACTIVE", "NO_BASE_DATA"].includes(error.code) ? 409 : 400, { error: error.message });
+      }
+      return true;
+    }
+    const startMatch = /^\/api\/admin\/runs\/([^/]+)\/start$/.exec(pathname);
+    if (startMatch && request.method === "POST") {
+      try {
+        this._assertSameOrigin(request);
+        const run = this.startQueuedRun(decodeURIComponent(startMatch[1]));
+        this._sendJson(response, 202, { run });
+      } catch (error) {
+        this._sendJson(response, error.code === "RUN_NOT_FOUND" ? 404 : 409, { error: error.message });
+      }
+      return true;
+    }
+    const cancelMatch = /^\/api\/admin\/runs\/([^/]+)\/cancel$/.exec(pathname);
+    if (cancelMatch && request.method === "POST") {
+      try {
+        this._assertSameOrigin(request);
+        const run = this.cancelRun(decodeURIComponent(cancelMatch[1]));
+        this._sendJson(response, 202, { run });
+      } catch (error) {
+        this._sendJson(response, error.code === "RUN_NOT_FOUND" ? 404 : 409, { error: error.message });
       }
       return true;
     }
@@ -454,30 +482,33 @@ class AdminService {
     if (Date.now() < new Date(schedule.nextRunAt).getTime()) return;
     schedule.nextRunAt = nextScheduledTime(schedule);
     this._save();
-    if (!this.activeProcess) {
-      try {
-        const options = {
-          mode: schedule.mode,
-          computeDevice: schedule.computeDevice,
-          computeConfig: schedule.computeConfig,
-          nodeId: schedule.nodeId,
-          steps: schedule.steps,
-          name: scheduledRunName(schedule.namePrefix),
-        };
-        if (this.onScheduleRun) {
-          Promise.resolve(this.onScheduleRun("scheduled", options)).catch((error) => {
-            console.error(`Could not start scheduled pipeline: ${error.message}`);
-          });
-        }
-        else this.startRun("scheduled", options);
-      } catch (error) {
-        console.error(`Could not start scheduled pipeline: ${error.message}`);
+    try {
+      const options = {
+        mode: schedule.mode,
+        computeDevice: schedule.computeDevice,
+        computeConfig: schedule.computeConfig,
+        nodeId: schedule.nodeId,
+        steps: schedule.steps,
+        name: scheduledRunName(schedule.namePrefix),
+      };
+      if (this.onScheduleRun) {
+        Promise.resolve(this.onScheduleRun("scheduled", options)).catch((error) => {
+          console.error(`Could not start scheduled pipeline: ${error.message}`);
+        });
       }
+      else this.startRun("scheduled", options);
+    } catch (error) {
+      console.error(`Could not start scheduled pipeline: ${error.message}`);
     }
   }
 
   startRun(trigger, options = {}) {
-    if (this.activeProcess) {
+    const run = this.queueRun(trigger, options);
+    return this.startQueuedRun(run.id);
+  }
+
+  queueRun(trigger, options = {}) {
+    if (this.activeProcess || this.state.runs.some((run) => run.status === "queued")) {
       const error = new Error("A pipeline execution is already running.");
       error.code = "RUN_ACTIVE";
       throw error;
@@ -511,7 +542,7 @@ class AdminService {
       stage: "starting",
       steps,
       queuedAt: now,
-      startedAt: now,
+      startedAt: null,
       endedAt: null,
       durationMs: null,
       downloadDurationMs: null,
@@ -539,11 +570,49 @@ class AdminService {
     run.logs.push({
       at: now,
       source: "stdout",
-      message: `Compute target: ${computeDescriptions[computeDevice]}`,
+      message: `Queued by an administrator. Compute target: ${computeDescriptions[computeDevice]}`,
     });
     this.state.runs.unshift(run);
     this._save();
     this._notifyRunUpdated(run);
+
+    return run;
+  }
+
+  startQueuedRun(runId) {
+    const run = this.state.runs.find((candidate) => candidate.id === runId);
+    if (!run) {
+      const error = new Error("Execution not found.");
+      error.code = "RUN_NOT_FOUND";
+      throw error;
+    }
+    if (run.status !== "queued") {
+      const error = new Error("This pipeline execution is not queued.");
+      error.code = "RUN_NOT_QUEUED";
+      throw error;
+    }
+    if (this.activeProcess) {
+      const error = new Error("A pipeline execution is already running.");
+      error.code = "RUN_ACTIVE";
+      throw error;
+    }
+    const computeDevice = validateComputeDevice(run.computeDevice);
+    const python = this._pythonCommand(computeDevice);
+    if (!fs.existsSync(python)) {
+      const setupCommand = computeDevice === "gpu_amd" ? "npm run pipeline:setup:amd" : "npm run pipeline:setup";
+      throw new Error(`Pipeline environment is not installed. Run ${setupCommand} first.`);
+    }
+    const mode = validateRunMode(run.mode);
+    const steps = validateForecastSteps(run.steps);
+    const reusableBaseData = mode === "inference" ? findReusableBaseData(this.workDir, this.state.runs) : null;
+    if (mode === "inference" && !reusableBaseData) {
+      const error = new Error("Inference-only requires base data from a previous full pipeline run.");
+      error.code = "NO_BASE_DATA";
+      throw error;
+    }
+    const startedAt = new Date().toISOString();
+    run.startedAt = startedAt;
+    run.logs.push({ at: startedAt, source: "stdout", message: "Queued execution started by an administrator." });
 
     const runner = path.join(this.pipelineRoot, "scripts", "run_admin_pipeline.py");
     const args = [
@@ -563,6 +632,7 @@ class AdminService {
     }
     const child = spawn(python, args, {
       cwd: this.pipelineRoot,
+      detached: process.platform !== "win32",
       env: {
         ...process.env,
         PYTHONUNBUFFERED: "1",
@@ -571,6 +641,7 @@ class AdminService {
       stdio: ["ignore", "pipe", "pipe"],
     });
     this.activeProcess = child;
+    this.activeRunId = run.id;
     run.status = "running";
     this._save();
     this._notifyRunUpdated(run);
@@ -579,6 +650,80 @@ class AdminService {
     child.on("error", (error) => this._finishRun(run, 1, error));
     child.on("close", (code) => this._finishRun(run, code, null));
     return run;
+  }
+
+  cancelRun(runId) {
+    const run = this.state.runs.find((candidate) => candidate.id === runId);
+    if (!run) {
+      const error = new Error("Execution not found.");
+      error.code = "RUN_NOT_FOUND";
+      throw error;
+    }
+    if (!["queued", "running"].includes(run.status)) {
+      const error = new Error("This pipeline execution is no longer running.");
+      error.code = "RUN_NOT_ACTIVE";
+      throw error;
+    }
+    if (run.status === "queued") {
+      const canceledAt = new Date().toISOString();
+      run.status = "canceled";
+      run.stage = "canceled";
+      run.endedAt = canceledAt;
+      run.durationMs = 0;
+      run.logs.push({ at: canceledAt, source: "stdout", message: "Queued execution canceled by an administrator." });
+      this._save();
+      this._notifyRunUpdated(run, true);
+      return run;
+    }
+    if (!this.activeProcess || this.activeRunId !== run.id) {
+      const error = new Error("This pipeline execution is not running on this node.");
+      error.code = "RUN_NOT_LOCAL";
+      throw error;
+    }
+    if (run.cancelRequestedAt) return run;
+
+    run.cancelRequestedAt = new Date().toISOString();
+    run.logs.push({ at: run.cancelRequestedAt, source: "stdout", message: "Stop requested by an administrator." });
+    this._save();
+    this._notifyRunUpdated(run);
+
+    const child = this.activeProcess;
+    try {
+      this._signalProcess(child, "SIGTERM");
+    } catch (error) {
+      delete run.cancelRequestedAt;
+      run.logs.push({ at: new Date().toISOString(), source: "stderr", message: `Could not stop pipeline: ${error.message}` });
+      this._save();
+      this._notifyRunUpdated(run);
+      error.code = "CANCEL_FAILED";
+      throw error;
+    }
+    this.cancelTimer = setTimeout(() => {
+      if (this.activeProcess !== child) return;
+      try {
+        this._signalProcess(child, "SIGKILL");
+      } catch (error) {
+        delete run.cancelRequestedAt;
+        run.logs.push({ at: new Date().toISOString(), source: "stderr", message: `Could not force-stop pipeline: ${error.message}` });
+        this.cancelTimer = null;
+        this._save();
+        this._notifyRunUpdated(run);
+      }
+    }, 5_000);
+    this.cancelTimer.unref();
+    return run;
+  }
+
+  _signalProcess(child, signal) {
+    if (process.platform !== "win32" && Number.isInteger(child.pid) && child.pid > 0) {
+      try {
+        process.kill(-child.pid, signal);
+        return true;
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
+    return child.kill(signal);
   }
 
   _captureOutput(run, stream, source) {
@@ -637,18 +782,27 @@ class AdminService {
   }
 
   _finishRun(run, code, processError) {
-    if (run.status === "complete" || run.status === "failed") return;
+    if (["complete", "failed", "canceled"].includes(run.status)) return;
+    if (this.cancelTimer) clearTimeout(this.cancelTimer);
+    this.cancelTimer = null;
     this.activeProcess = null;
+    this.activeRunId = null;
     run.endedAt = new Date().toISOString();
     run.durationMs = durationMs(run.startedAt, run.endedAt);
-    run.stage = code === 0 ? "complete" : "failed";
-    run.status = code === 0 ? "complete" : "failed";
-    if (processError) run.error = processError.message;
-    else if (code !== 0) {
+    if (run.cancelRequestedAt) {
+      run.stage = "canceled";
+      run.status = "canceled";
+      run.error = null;
+    } else {
+      run.stage = code === 0 ? "complete" : "failed";
+      run.status = code === 0 ? "complete" : "failed";
+    }
+    if (!run.cancelRequestedAt && processError) run.error = processError.message;
+    else if (!run.cancelRequestedAt && code !== 0) {
       run.error = [...run.logs].reverse().find((line) => line.source === "stderr")?.message
         || `Pipeline exited with status ${code}.`;
     }
-    if (code === 0 && run.runDir) Object.assign(run, summarizeRunStorage(run.runDir));
+    if (!run.cancelRequestedAt && code === 0 && run.runDir) Object.assign(run, summarizeRunStorage(run.runDir));
     this._save();
     this._notifyRunUpdated(run, true);
   }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#071210" />
   <title>Pipeline Control — Digital Twin Earth</title>
-  <link rel="stylesheet" href="/admin/admin.css?v=7" />
+  <link rel="stylesheet" href="/admin/admin.css?v=8" />
 </head>
 <body>
   <div class="aurora" aria-hidden="true"></div>
@@ -114,6 +114,7 @@
             <span class="button-icon">▶</span>
             <span>Run now</span>
           </button>
+          <button id="queue-run" class="secondary-button" type="button" disabled>Queue</button>
         </div>
 
         <div class="schedule-inline">
@@ -147,13 +148,18 @@
     </section>
 
     <section id="active-run" class="panel active-panel" hidden>
+      <div id="active-run-tabs" class="active-run-tabs" role="group" aria-label="Running executions"></div>
       <div class="panel-heading">
         <div>
           <span class="eyebrow">Live execution</span>
           <h2 id="active-title">Pipeline running</h2>
         </div>
-        <strong id="active-elapsed" class="elapsed">00:00</strong>
+        <div class="live-run-actions">
+          <strong id="active-elapsed" class="elapsed">00:00</strong>
+          <button id="stop-run" class="danger-button" type="button">Stop run</button>
+        </div>
       </div>
+      <p id="stop-message" class="form-message live-run-message" role="status"></p>
       <div class="progress-track"><span id="progress-bar"></span></div>
       <div id="stage-list" class="stage-list"></div>
       <pre id="live-log" class="log-view" aria-label="Live pipeline log"></pre>
@@ -204,6 +210,6 @@
     <pre id="dialog-log" class="log-view"></pre>
   </dialog>
 
-  <script src="/admin/admin.js?v=7"></script>
+  <script src="/admin/admin.js?v=10"></script>
 </body>
 </html>

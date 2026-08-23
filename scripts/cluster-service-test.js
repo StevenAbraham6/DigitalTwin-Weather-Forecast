@@ -17,14 +17,47 @@ class FakeAdminService {
   }
   setCallbacks(callbacks) { this.callbacks = callbacks; }
   async status() {
+    const localActive = this.runs.some((run) => run.id === "local" && ["queued", "running"].includes(run.status));
     return {
-      pipeline: { ready: true, active: false, reusableBaseData: null },
+      pipeline: { ready: true, active: localActive, reusableBaseData: null },
       schedule: { enabled: false },
       storage: { totalBytes: 0, snapshotBytes: 0, snapshotCount: 0, runCount: 0 },
       runs: this.runs,
     };
   }
-  startRun(trigger, options) { return { id: "local", trigger, ...options }; }
+  startRun(trigger, options) {
+    const run = { id: "local", trigger, status: "running", stage: "inference", startedAt: new Date().toISOString(), logs: [], ...options };
+    this.upsertExternalRun(run);
+    return run;
+  }
+  queueRun(trigger, options) {
+    const run = { id: "local-queued", trigger, status: "queued", queuedAt: new Date().toISOString(), startedAt: null, logs: [], ...options };
+    this.upsertExternalRun(run);
+    return run;
+  }
+  startQueuedRun(runId) {
+    const run = this.runs.find((candidate) => candidate.id === runId);
+    if (!run) {
+      const error = new Error("Execution not found.");
+      error.code = "RUN_NOT_FOUND";
+      throw error;
+    }
+    run.status = "running";
+    run.startedAt = new Date().toISOString();
+    return run;
+  }
+  cancelRun(runId) {
+    const run = this.runs.find((candidate) => candidate.id === runId);
+    if (!run) {
+      const error = new Error("Execution not found.");
+      error.code = "RUN_NOT_FOUND";
+      throw error;
+    }
+    run.cancelRequestedAt = new Date().toISOString();
+    run.status = "canceled";
+    run.stage = "canceled";
+    return run;
+  }
   upsertExternalRun(run) { this.runs = [run, ...this.runs.filter((candidate) => candidate.id !== run.id)]; return run; }
 }
 
@@ -72,6 +105,16 @@ async function main() {
       try {
         global.fetch = async (url, options) => {
           dispatched = { url: String(url), options };
+          if (String(url).endsWith("/api/cluster/runs/remote-trigger/cancel")) {
+            return new Response(JSON.stringify({ run: {
+              id: "remote-trigger",
+              nodeId: "slave-1",
+              nodeName: "Edge 1",
+              status: "running",
+              cancelRequestedAt: new Date().toISOString(),
+              logs: [],
+            } }), { status: 202, headers: { "Content-Type": "application/json" } });
+          }
           return new Response(JSON.stringify({ run: { id: "remote-trigger", nodeId: "slave-1", nodeName: "Edge 1", status: "queued", logs: [] } }), {
             status: 202,
             headers: { "Content-Type": "application/json" },
@@ -82,15 +125,81 @@ async function main() {
         assert.equal(dispatched.url, "http://127.0.0.1:8081/api/cluster/trigger");
         assert.equal(JSON.parse(dispatched.options.body).options.computeDevice, "gpu_amd");
         assert.equal(dispatched.options.headers.Authorization, `Bearer ${registered.body.token}`);
+        await assert.rejects(
+          master.startRun("manual", { nodeId: "slave-1", computeConfig: "gpu_amd", mode: "full", steps: 8 }),
+          /already running/,
+        );
+        const localRun = await master.startRun("manual", { nodeId: master.profile.id, computeConfig: "gpu_l4", mode: "full", steps: 8, name: "Local concurrent run" });
+        assert.equal(localRun.id, "local");
+        const concurrentStatus = await master.status();
+        assert.equal(concurrentStatus.activeRuns.length, 2);
+        assert.deepEqual(concurrentStatus.nodes.map((node) => node.active), [true, true]);
+
+        const localStop = await call(master, "POST", "/api/admin/runs/local/cancel", {});
+        assert.equal(localStop.status, 202);
+        assert.equal(localStop.body.run.status, "canceled");
+        const remoteStop = await call(master, "POST", "/api/admin/runs/remote-trigger/cancel", {});
+        assert.equal(remoteStop.status, 202);
+        assert.ok(remoteStop.body.run.cancelRequestedAt);
+        assert.equal(dispatched.url, "http://127.0.0.1:8081/api/cluster/runs/remote-trigger/cancel");
+        assert.equal(dispatched.options.headers.Authorization, `Bearer ${registered.body.token}`);
       } finally {
         global.fetch = originalFetch;
       }
+
+      for (const run of admin.runs) run.status = "complete";
+
+      const queuedLocal = await call(master, "POST", "/api/admin/runs", {
+        queueOnly: true,
+        nodeId: master.profile.id,
+        computeConfig: "gpu_l4",
+        mode: "full",
+        steps: 8,
+        name: "Queued locally",
+      });
+      assert.equal(queuedLocal.status, 202);
+      assert.equal(queuedLocal.body.run.status, "queued");
+      assert.equal((await master.status()).nodes[0].active, true, "a queue reservation must mark its node busy");
+      const blockedByQueue = await call(master, "POST", "/api/admin/runs", {
+        queueOnly: true,
+        nodeId: master.profile.id,
+        computeConfig: "gpu_l4",
+        mode: "full",
+        steps: 8,
+      });
+      assert.equal(blockedByQueue.status, 409);
+      const startedQueue = await call(master, "POST", `/api/admin/runs/${queuedLocal.body.run.id}/start`, {});
+      assert.equal(startedQueue.status, 202);
+      assert.equal(startedQueue.body.run.status, "running");
+      startedQueue.body.run.status = "complete";
+      admin.runs.find((run) => run.id === startedQueue.body.run.id).status = "complete";
 
       const updated = await call(master, "PUT", "/api/cluster/runs/run-1", {
         run: { id: "run-1", nodeId: "slave-1", name: "Remote forecast", status: "running", logs: [{ at: new Date().toISOString(), source: "stdout", message: "Inference" }] },
       }, { authorization: `Bearer ${registered.body.token}` });
       assert.equal(updated.status, 200);
       assert.equal(admin.runs[0].nodeName, "Edge 1");
+
+      const slaveAdmin = new FakeAdminService();
+      slaveAdmin.runs.push({ id: "slave-local", nodeId: "slave-1", status: "running", logs: [] });
+      const slave = new ClusterService({
+        projectRoot: root,
+        publishRoot,
+        adminService: slaveAdmin,
+        publicUrl: () => "http://127.0.0.1:8081",
+        dataRoot: path.join(root, "slave-admin-data"),
+      });
+      try {
+        slave.profile = slaveProfile;
+        slave.masterToken = registered.body.token;
+        const unauthorizedStop = await call(slave, "POST", "/api/cluster/runs/slave-local/cancel", {}, { authorization: "Bearer wrong-token" });
+        assert.equal(unauthorizedStop.status, 401);
+        const authorizedStop = await call(slave, "POST", "/api/cluster/runs/slave-local/cancel", {}, { authorization: `Bearer ${registered.body.token}` });
+        assert.equal(authorizedStop.status, 202);
+        assert.equal(authorizedStop.body.run.status, "canceled");
+      } finally {
+        slave.close();
+      }
 
       const incoming = path.join(master.forecastRoot, "slave-1", ".incoming", "run-1");
       fs.mkdirSync(path.join(incoming, "data", "ui-surface"), { recursive: true });
@@ -105,7 +214,7 @@ async function main() {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-  console.log("Node profile, registration, progress ingestion, compute mapping, and forecast transfer passed.");
+  console.log("Node profile, concurrent execution, cancellation routing, progress ingestion, compute mapping, and forecast transfer passed.");
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

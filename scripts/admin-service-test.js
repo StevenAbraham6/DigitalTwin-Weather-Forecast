@@ -216,13 +216,45 @@ async function main() {
       const blankName = await adminRequest(service, "PATCH", "/api/admin/runs/rename-me", { name: " " });
       assert.equal(blankName.status, 400);
       assert.equal(service.state.runs[0].name, "Custom audit name");
+      const queued = service.queueRun("manual", { mode: "full", computeDevice: "cpu", steps: 8, name: "Waiting forecast" });
+      assert.equal(queued.status, "queued");
+      assert.equal(queued.startedAt, null);
+      assert.throws(
+        () => service.queueRun("manual", { mode: "full", computeDevice: "cpu", steps: 8 }),
+        /already running/,
+      );
+      service._recoverInterruptedRuns();
+      assert.equal(queued.status, "queued", "intentional queued runs must survive app recovery");
+      const canceledQueue = await adminRequest(service, "POST", `/api/admin/runs/${queued.id}/cancel`, {});
+      assert.equal(canceledQueue.status, 202);
+      assert.equal(canceledQueue.body.run.status, "canceled");
+      assert.equal(service.activeProcess, null);
+      const activeStartedAt = new Date().toISOString();
+      service.state.runs.unshift(
+        { id: "active-1", name: "Active one", mode: "full", computeDevice: "cpu", trigger: "manual", status: "running", startedAt: activeStartedAt, logs: [] },
+        { id: "active-2", name: "Active two", mode: "full", computeDevice: "cpu", trigger: "manual", status: "queued", startedAt: activeStartedAt, logs: [] },
+      );
+      const multiRunStatus = await service.status();
+      assert.deepEqual(multiRunStatus.activeRuns.map((run) => run.id), ["active-1", "active-2"]);
+      assert.equal(multiRunStatus.currentRun.id, "active-1");
+      const signals = [];
+      service.activeRunId = "active-1";
+      service.activeProcess = { kill(signal) { signals.push(signal); return true; } };
+      const canceled = await adminRequest(service, "POST", "/api/admin/runs/active-1/cancel", {});
+      assert.equal(canceled.status, 202);
+      assert.ok(canceled.body.run.cancelRequestedAt);
+      assert.deepEqual(signals, ["SIGTERM"]);
+      service._finishRun(service.state.runs.find((run) => run.id === "active-1"), null, null);
+      assert.equal(service.state.runs.find((run) => run.id === "active-1").status, "canceled");
+      const repeatedCancel = await adminRequest(service, "POST", "/api/admin/runs/active-1/cancel", {});
+      assert.equal(repeatedCancel.status, 409);
     } finally {
       service.close();
     }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-  console.log("Admin run controls, schedule validation, and storage accounting passed.");
+  console.log("Admin run controls, cancellation lifecycle, schedule validation, and storage accounting passed.");
 }
 
 main().catch((error) => {

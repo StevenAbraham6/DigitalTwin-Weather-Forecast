@@ -19,6 +19,7 @@ const elements = {
   nextRun: document.querySelector("#next-run"),
   nextRunDetail: document.querySelector("#next-run-detail"),
   runNow: document.querySelector("#run-now"),
+  queueRun: document.querySelector("#queue-run"),
   runName: document.querySelector("#run-name"),
   runMode: document.querySelector("#run-mode"),
   computeDevice: document.querySelector("#compute-device"),
@@ -31,8 +32,11 @@ const elements = {
   saveSchedule: document.querySelector("#save-schedule"),
   scheduleMessage: document.querySelector("#schedule-message"),
   activeRun: document.querySelector("#active-run"),
+  activeRunTabs: document.querySelector("#active-run-tabs"),
   activeTitle: document.querySelector("#active-title"),
   activeElapsed: document.querySelector("#active-elapsed"),
+  stopRun: document.querySelector("#stop-run"),
+  stopMessage: document.querySelector("#stop-message"),
   progressBar: document.querySelector("#progress-bar"),
   stageList: document.querySelector("#stage-list"),
   liveLog: document.querySelector("#live-log"),
@@ -52,6 +56,7 @@ let latestState = null;
 let pollTimer = null;
 let scheduleHydrated = false;
 let nodeOptionsSignature = "";
+let selectedActiveRunId = null;
 
 const configLabels = {
   cpu_12c: "CPU 12c",
@@ -153,13 +158,13 @@ function getSelectedNode() {
 
 function updateNodeOptions(nodes = [], schedule = {}) {
   const available = nodes.filter((node) => node.self || node.connected);
-  const signature = available.map((node) => `${node.id}:${node.name}:${node.connected}:${node.config.join(",")}`).join("|");
+  const signature = available.map((node) => `${node.id}:${node.name}:${node.connected}:${node.active}:${node.config.join(",")}`).join("|");
   if (signature === nodeOptionsSignature) return;
   const previous = elements.executionNode.value || schedule.nodeId;
   elements.executionNode.replaceChildren(...available.map((node) => {
     const option = document.createElement("option");
     option.value = node.id;
-    option.textContent = `${node.name}${node.self ? " (this node)" : ""}`;
+    option.textContent = `${node.name}${node.self ? " (this node)" : ""}${node.active ? " · busy" : " · available"}`;
     return option;
   }));
   if (available.some((node) => node.id === previous)) elements.executionNode.value = previous;
@@ -182,11 +187,16 @@ function updateComputeOptions() {
 
 function render(state) {
   const { pipeline, storage, schedule, runs, currentRun } = state;
+  const activeRuns = state.activeRuns || (currentRun ? [currentRun] : []);
+  const connectedNodes = state.nodes.filter((node) => node.self || node.connected);
+  const activeNodeCount = connectedNodes.filter((node) => node.active).length;
   updateNodeOptions(state.nodes, schedule);
   const selectedNode = getSelectedNode();
   const selectedActive = Boolean(selectedNode?.active);
   elements.pipelineStatus.className = `status-pill ${pipeline.active ? "running" : selectedNode?.pipelineReady ? "ready" : "error"}`;
-  elements.pipelineStatus.lastChild.textContent = pipeline.active ? " Pipeline running" : selectedNode?.pipelineReady ? " Pipeline ready" : " Setup required";
+  elements.pipelineStatus.lastChild.textContent = pipeline.active
+    ? ` ${activeNodeCount} of ${connectedNodes.length} nodes busy`
+    : selectedNode?.pipelineReady ? " Pipeline ready" : " Setup required";
   elements.displayLink.hidden = state.node.role !== "master";
   elements.currentNode.textContent = state.node.name;
   elements.currentNodeDetail.textContent = `${capitalize(state.node.role)} · ${state.node.serverModel} · ${state.node.config.map((item) => configLabels[item] || item).join(", ")}`;
@@ -205,7 +215,7 @@ function render(state) {
   elements.snapshotStorage.textContent = formatBytes(storage.snapshotBytes);
   elements.snapshotDetail.textContent = `${storage.snapshotCount.toLocaleString()} UI snapshots retained`;
 
-  const last = runs.find((run) => run.status === "complete" || run.status === "failed");
+  const last = runs.find((run) => ["complete", "failed", "canceled"].includes(run.status));
   elements.lastRun.textContent = last ? formatDate(last.endedAt || last.startedAt) : "—";
   elements.lastRunDetail.textContent = last ? `${capitalize(last.status)} · ${formatDuration(last.durationMs)}` : "No execution history yet";
   if (schedule.enabled && schedule.nextRunAt) {
@@ -229,15 +239,37 @@ function render(state) {
     scheduleHydrated = true;
   }
   updateRunAvailability();
-  renderActive(currentRun);
+  renderActive(activeRuns.filter((run) => run.status === "running"));
   if (!elements.history.contains(document.activeElement)) renderHistory(runs);
 }
 
-function renderActive(run) {
-  elements.activeRun.hidden = !run;
-  if (!run) return;
+function renderActive(runs) {
+  elements.activeRun.hidden = runs.length === 0;
+  if (!runs.length) {
+    selectedActiveRunId = null;
+    return;
+  }
+  if (!runs.some((run) => run.id === selectedActiveRunId)) selectedActiveRunId = runs[0].id;
+  elements.activeRunTabs.hidden = runs.length < 2;
+  elements.activeRunTabs.replaceChildren(...runs.map((run) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "active-run-tab";
+    button.setAttribute("aria-pressed", String(run.id === selectedActiveRunId));
+    button.textContent = `${run.nodeName || "Local node"} · ${run.name || "Pipeline run"}`;
+    button.addEventListener("click", () => {
+      selectedActiveRunId = run.id;
+      renderActive(runs);
+    });
+    return button;
+  }));
+  const run = runs.find((candidate) => candidate.id === selectedActiveRunId) || runs[0];
+  elements.stopRun.disabled = Boolean(run.cancelRequestedAt);
+  elements.stopRun.textContent = run.cancelRequestedAt ? "Stopping…" : "Stop run";
+  elements.stopRun.title = `Stop ${run.name || "this pipeline execution"} on ${run.nodeName || "the local node"}`;
   const stageIndex = Math.max(0, stages.indexOf(run.stage));
-  elements.activeTitle.textContent = `${run.name || "Pipeline run"} · ${run.nodeName || "Local node"} · ${computeLabel(run.computeConfig || run.computeDevice)} · ${stageLabels[run.stage] || "Starting pipeline"}…`;
+  const liveStage = run.cancelRequestedAt ? "Stopping pipeline" : stageLabels[run.stage] || "Starting pipeline";
+  elements.activeTitle.textContent = `${run.name || "Pipeline run"} · ${run.nodeName || "Local node"} · ${computeLabel(run.computeConfig || run.computeDevice)} · ${liveStage}…`;
   elements.activeElapsed.textContent = formatDuration(Date.now() - new Date(run.startedAt).getTime());
   elements.progressBar.style.width = `${Math.max(4, (stageIndex / stages.length) * 100 + 8)}%`;
   elements.stageList.replaceChildren(...stages.map((stage, index) => {
@@ -279,6 +311,20 @@ function renderHistory(runs) {
     nodeCell.textContent = run.nodeName || "Local node";
     row.append(nodeCell);
     const actions = document.createElement("td");
+    if (run.status === "queued") {
+      const startButton = document.createElement("button");
+      startButton.className = "quiet-button";
+      startButton.type = "button";
+      startButton.textContent = "Start";
+      startButton.addEventListener("click", () => startQueuedRun(run, startButton));
+      actions.append(startButton);
+      const cancelButton = document.createElement("button");
+      cancelButton.className = "quiet-button";
+      cancelButton.type = "button";
+      cancelButton.textContent = "Cancel";
+      cancelButton.addEventListener("click", () => cancelQueuedRun(run, cancelButton));
+      actions.append(cancelButton);
+    }
     const button = document.createElement("button");
     button.className = "quiet-button";
     button.type = "button";
@@ -293,7 +339,7 @@ function renderHistory(runs) {
       { text: formatDuration(run.inferenceDurationMs) },
       { text: run.snapshotCount == null ? "—" : run.snapshotCount.toLocaleString() },
       { text: `${capitalize(run.trigger)} · ${run.mode === "inference" ? "Inference only" : "Full pipeline"}` },
-      { text: formatDate(run.startedAt) },
+      { text: formatDate(run.startedAt || run.queuedAt) },
     ];
     for (const value of values) {
       const cell = document.createElement("td");
@@ -337,6 +383,7 @@ function showRun(run) {
     `${capitalize(run.trigger)} · ${run.mode === "inference" ? "Inference only · reused base data" : "Full pipeline"}`,
     `Node ${run.nodeName || "Local node"} · ${run.serverModel || ""}`,
     `Compute ${computeLabel(run.computeConfig || run.computeDevice)}`,
+    `Queued ${formatDate(run.queuedAt)}`,
     `Started ${formatDate(run.startedAt)}`,
     `Ended ${formatDate(run.endedAt)}`,
     `Total ${formatDuration(run.durationMs)}`,
@@ -377,6 +424,7 @@ function computeLabel(value) {
 
 async function startRun() {
   const mode = elements.runMode.value;
+  const launchedNodeId = elements.executionNode.value;
   elements.runNow.disabled = true;
   const label = mode === "inference" ? "inference" : "full pipeline";
   setMessage(elements.runMessage, `Starting ${label} on ${computeLabel(elements.computeDevice.value)}…`);
@@ -393,13 +441,88 @@ async function startRun() {
     });
     setMessage(elements.runMessage, `${mode === "inference" ? "Inference" : "Full pipeline"} started. Live timings will appear below.`);
     await refresh();
+    const nextNode = latestState?.nodes?.find((node) => (node.self || node.connected) && !node.active && node.pipelineReady && node.id !== launchedNodeId);
+    if (nextNode) {
+      elements.executionNode.value = nextNode.id;
+      updateComputeOptions();
+      render(latestState);
+    }
   } catch (error) {
     setMessage(elements.runMessage, error.message, true);
     if (latestState) render(latestState);
   }
 }
 
+async function queueRun() {
+  const mode = elements.runMode.value;
+  elements.queueRun.disabled = true;
+  setMessage(elements.runMessage, "Adding execution to the queue…");
+  try {
+    await api("/api/admin/runs", {
+      method: "POST",
+      body: JSON.stringify({
+        queueOnly: true,
+        nodeId: elements.executionNode.value,
+        steps: Number(elements.forecastSteps.value),
+        mode,
+        computeConfig: elements.computeDevice.value,
+        name: elements.runName.value,
+      }),
+    });
+    setMessage(elements.runMessage, "Execution queued. Start or cancel it from execution history.");
+    await refresh();
+  } catch (error) {
+    setMessage(elements.runMessage, error.message, true);
+    if (latestState) render(latestState);
+  }
+}
+
+async function startQueuedRun(run, button) {
+  button.disabled = true;
+  setMessage(elements.runMessage, `Starting “${run.name}”…`);
+  try {
+    await api(`/api/admin/runs/${encodeURIComponent(run.id)}/start`, { method: "POST", body: "{}" });
+    setMessage(elements.runMessage, `“${run.name}” started.`);
+    await refresh();
+  } catch (error) {
+    setMessage(elements.runMessage, error.message, true);
+    button.disabled = false;
+  }
+}
+
+async function cancelQueuedRun(run, button) {
+  if (!window.confirm(`Cancel queued execution “${run.name}”?`)) return;
+  button.disabled = true;
+  try {
+    await api(`/api/admin/runs/${encodeURIComponent(run.id)}/cancel`, { method: "POST", body: "{}" });
+    setMessage(elements.runMessage, `“${run.name}” canceled.`);
+    await refresh();
+  } catch (error) {
+    setMessage(elements.runMessage, error.message, true);
+    button.disabled = false;
+  }
+}
+
+async function stopRun() {
+  const run = latestState?.activeRuns?.find((candidate) => candidate.id === selectedActiveRunId);
+  if (!run || run.cancelRequestedAt) return;
+  if (!window.confirm(`Stop “${run.name || "Pipeline run"}” on ${run.nodeName || "this node"}?`)) return;
+  elements.stopRun.disabled = true;
+  elements.stopRun.textContent = "Stopping…";
+  setMessage(elements.stopMessage, "Sending stop request…");
+  try {
+    await api(`/api/admin/runs/${encodeURIComponent(run.id)}/cancel`, { method: "POST", body: "{}" });
+    setMessage(elements.stopMessage, "Stop requested. The node will be available after the process exits.");
+    await refresh();
+  } catch (error) {
+    setMessage(elements.stopMessage, error.message, true);
+    if (latestState) render(latestState);
+  }
+}
+
 elements.runNow.addEventListener("click", startRun);
+elements.queueRun.addEventListener("click", queueRun);
+elements.stopRun.addEventListener("click", stopRun);
 
 elements.saveSchedule.addEventListener("click", async () => {
   elements.saveSchedule.disabled = true;
@@ -434,10 +557,20 @@ function updateRunAvailability() {
   if (!latestState) return;
   const node = getSelectedNode();
   const inferenceUnavailable = elements.runMode.value === "inference" && !node?.reusableBaseData;
+  const connectedNodes = latestState.nodes.filter((candidate) => candidate.self || candidate.connected);
+  const freeNodes = connectedNodes.filter((candidate) => !candidate.active && candidate.pipelineReady);
   elements.runNow.disabled = !node || node.active || !node.pipelineReady || inferenceUnavailable;
+  elements.queueRun.disabled = elements.runNow.disabled;
   elements.runNow.title = inferenceUnavailable
     ? "Run the full pipeline first to download base data."
-    : "Start one execution using the shared settings.";
+    : node?.active && freeNodes.length
+      ? "Choose an available node to start another execution."
+      : freeNodes.length === 0
+        ? `All ${connectedNodes.length} connected nodes are running pipelines.`
+        : "Start one execution using the shared settings.";
+  elements.queueRun.title = elements.runNow.disabled
+    ? elements.runNow.title
+    : "Reserve this node and add the execution to history without starting it.";
 }
 
 elements.runMode.addEventListener("change", updateRunAvailability);

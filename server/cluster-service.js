@@ -182,12 +182,17 @@ class ClusterService {
 
   localNode(status) {
     const profile = this.profile;
+    const activeRun = status.runs.find((run) => (
+      ["queued", "running"].includes(run.status)
+      && (!run.nodeId || run.nodeId === profile.id)
+    ));
     return publicNode(profile, {
       self: true,
       connected: true,
       lastSeen: new Date().toISOString(),
       pipelineReady: status.pipeline.ready,
-      active: status.pipeline.active,
+      active: Boolean(activeRun || status.pipeline.active),
+      activeRunId: activeRun?.id || null,
       reusableBaseData: status.pipeline.reusableBaseData,
       forecastAvailable: fs.existsSync(path.join(this.publishRoot, "catalog.json")),
     });
@@ -199,12 +204,14 @@ class ClusterService {
     if (!this.isMaster()) return nodes;
     for (const entry of this.registry.values()) {
       const connected = Boolean(entry.lastSeen && Date.now() - new Date(entry.lastSeen).getTime() < ONLINE_WINDOW_MS);
+      const activeRun = status.runs.find((run) => ["queued", "running"].includes(run.status) && run.nodeId === entry.profile.id);
       nodes.push(publicNode(entry.profile, {
         self: false,
         connected,
         lastSeen: entry.lastSeen,
         pipelineReady: Boolean(entry.pipeline?.ready),
-        active: Boolean(entry.pipeline?.active),
+        active: Boolean(activeRun || entry.pipeline?.active),
+        activeRunId: activeRun?.id || null,
         reusableBaseData: entry.pipeline?.reusableBaseData || null,
         forecastAvailable: fs.existsSync(path.join(this.forecastRoot, entry.profile.id, "catalog.json")),
       }));
@@ -216,7 +223,8 @@ class ClusterService {
     const status = await this.adminService.status();
     if (!this.profile) return { ...status, configured: false, savedProfile: this.savedProfile, node: null, nodes: [] };
     const nodes = this.nodes(status);
-    const currentRun = status.runs.find((run) => run.status === "running" || run.status === "queued") || null;
+    const activeRuns = status.runs.filter((run) => run.status === "running" || run.status === "queued");
+    const currentRun = activeRuns[0] || null;
     return {
       ...status,
       configured: true,
@@ -224,7 +232,8 @@ class ClusterService {
       node: publicNode(this.profile),
       nodes,
       currentRun,
-      pipeline: { ...status.pipeline, active: Boolean(currentRun) },
+      activeRuns,
+      pipeline: { ...status.pipeline, active: nodes.some((node) => node.active) },
     };
   }
 
@@ -248,21 +257,89 @@ class ClusterService {
   }
 
   async startRun(trigger, options = {}) {
+    return this.createRun(trigger, options, false);
+  }
+
+  async queueRun(trigger, options = {}) {
+    return this.createRun(trigger, options, true);
+  }
+
+  async createRun(trigger, options = {}, queueOnly = false) {
     if (!this.profile) throw new Error("Configure this server as a master or slave node first.");
     const status = await this.adminService.status();
     const nodeId = options.nodeId || this.profile.id;
     const node = this.findNode(nodeId, status);
     if (!node) throw new Error("Selected node was not found.");
     if (!node.connected) throw new Error(`${node.name} is offline.`);
+    if (node.active) {
+      const error = new Error(`${node.name} is already running a pipeline execution.`);
+      error.code = "RUN_ACTIVE";
+      throw error;
+    }
     const compute = this.validateCompute(node, options.computeConfig);
     const runOptions = { ...options, ...compute, nodeId };
-    if (nodeId === this.profile.id) return this.adminService.startRun(trigger, runOptions);
+    if (nodeId === this.profile.id) return queueOnly
+      ? this.adminService.queueRun(trigger, runOptions)
+      : this.adminService.startRun(trigger, runOptions);
     if (!this.isMaster()) throw new Error("Only a master node can trigger another node.");
     const entry = this.registry.get(nodeId);
     const result = await requestJson(`${entry.baseUrl}/api/cluster/trigger`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${entry.token}` },
-      body: JSON.stringify({ trigger: "master", options: runOptions }),
+      body: JSON.stringify({ trigger: "master", options: runOptions, queueOnly }),
+    });
+    return this.adminService.upsertExternalRun(result.run);
+  }
+
+  async startQueuedRun(runId) {
+    if (!this.profile) throw new Error("Configure this server as a master or slave node first.");
+    const status = await this.adminService.status();
+    const run = status.runs.find((candidate) => candidate.id === runId);
+    if (!run) {
+      const error = new Error("Execution not found.");
+      error.code = "RUN_NOT_FOUND";
+      throw error;
+    }
+    if (run.status !== "queued") throw new Error("This pipeline execution is not queued.");
+    const nodeId = run.nodeId || this.profile.id;
+    if (nodeId === this.profile.id) return this.adminService.startQueuedRun(runId);
+    if (!this.isMaster()) throw new Error("Only a master node can start another node's queued execution.");
+    const entry = this.registry.get(nodeId);
+    const node = this.findNode(nodeId, status);
+    if (!entry || !node?.connected) throw new Error("The queued execution node is offline.");
+    const result = await requestJson(`${entry.baseUrl}/api/cluster/runs/${encodeURIComponent(runId)}/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${entry.token}` },
+      body: "{}",
+    });
+    return this.adminService.upsertExternalRun(result.run);
+  }
+
+  async cancelRun(runId) {
+    if (!this.profile) throw new Error("Configure this server as a master or slave node first.");
+    const status = await this.adminService.status();
+    const run = status.runs.find((candidate) => candidate.id === runId);
+    if (!run) {
+      const error = new Error("Execution not found.");
+      error.code = "RUN_NOT_FOUND";
+      throw error;
+    }
+    if (!["queued", "running"].includes(run.status)) {
+      const error = new Error("This pipeline execution is no longer running.");
+      error.code = "RUN_NOT_ACTIVE";
+      throw error;
+    }
+    const nodeId = run.nodeId || this.profile.id;
+    if (nodeId === this.profile.id) return this.adminService.cancelRun(runId);
+    if (!this.isMaster()) throw new Error("Only a master node can stop another node's execution.");
+    const entry = this.registry.get(nodeId);
+    if (!entry) throw new Error("The execution node was not found.");
+    const node = this.findNode(nodeId, status);
+    if (!node?.connected) throw new Error("The execution node is offline, so the stop request could not be delivered.");
+    const result = await requestJson(`${entry.baseUrl}/api/cluster/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${entry.token}` },
+      body: "{}",
     });
     return this.adminService.upsertExternalRun(result.run);
   }
@@ -403,8 +480,28 @@ class ClusterService {
       return true;
     }
     if (pathname === "/api/admin/runs" && request.method === "POST") {
-      try { sameOrigin(request); const body = await collectJson(request); sendJson(response, 202, { run: await this.startRun("manual", body) }); }
-      catch (error) { sendJson(response, /active|base data/i.test(error.message) ? 409 : 400, { error: error.message }); }
+      try { sameOrigin(request); const body = await collectJson(request); sendJson(response, 202, { run: await (body.queueOnly ? this.queueRun("manual", body) : this.startRun("manual", body)) }); }
+      catch (error) { sendJson(response, error.code === "RUN_ACTIVE" || /active|running|base data/i.test(error.message) ? 409 : 400, { error: error.message }); }
+      return true;
+    }
+    const adminStart = /^\/api\/admin\/runs\/([^/]+)\/start$/.exec(pathname);
+    if (adminStart && request.method === "POST") {
+      try {
+        sameOrigin(request);
+        sendJson(response, 202, { run: await this.startQueuedRun(decodeURIComponent(adminStart[1])) });
+      } catch (error) {
+        sendJson(response, error.code === "RUN_NOT_FOUND" ? 404 : 409, { error: error.message });
+      }
+      return true;
+    }
+    const adminCancel = /^\/api\/admin\/runs\/([^/]+)\/cancel$/.exec(pathname);
+    if (adminCancel && request.method === "POST") {
+      try {
+        sameOrigin(request);
+        sendJson(response, 202, { run: await this.cancelRun(decodeURIComponent(adminCancel[1])) });
+      } catch (error) {
+        sendJson(response, error.code === "RUN_NOT_FOUND" ? 404 : 409, { error: error.message });
+      }
       return true;
     }
     if (pathname === "/api/cluster/register" && request.method === "POST") {
@@ -436,12 +533,34 @@ class ClusterService {
       } catch (error) { sendJson(response, 401, { error: error.message }); }
       return true;
     }
+    const remoteCancel = /^\/api\/cluster\/runs\/([^/]+)\/cancel$/.exec(pathname);
+    if (remoteCancel && request.method === "POST") {
+      try {
+        if (!this.isSlave() || !this.authorized(request, this.masterToken)) throw new Error("Unauthorized master cancellation.");
+        sendJson(response, 202, { run: this.adminService.cancelRun(decodeURIComponent(remoteCancel[1])) });
+      } catch (error) {
+        sendJson(response, /Unauthorized/.test(error.message) ? 401 : error.code === "RUN_NOT_FOUND" ? 404 : 409, { error: error.message });
+      }
+      return true;
+    }
+    const remoteStart = /^\/api\/cluster\/runs\/([^/]+)\/start$/.exec(pathname);
+    if (remoteStart && request.method === "POST") {
+      try {
+        if (!this.isSlave() || !this.authorized(request, this.masterToken)) throw new Error("Unauthorized master start.");
+        sendJson(response, 202, { run: this.adminService.startQueuedRun(decodeURIComponent(remoteStart[1])) });
+      } catch (error) {
+        sendJson(response, /Unauthorized/.test(error.message) ? 401 : error.code === "RUN_NOT_FOUND" ? 404 : 409, { error: error.message });
+      }
+      return true;
+    }
     if (pathname === "/api/cluster/trigger" && request.method === "POST") {
       try {
         if (!this.isSlave() || !this.authorized(request, this.masterToken)) throw new Error("Unauthorized master trigger.");
         const body = await collectJson(request);
-        sendJson(response, 202, { run: await this.startRun("master", { ...body.options, nodeId: this.profile.id }) });
-      } catch (error) { sendJson(response, 400, { error: error.message }); }
+        sendJson(response, 202, { run: await (body.queueOnly
+          ? this.queueRun("master", { ...body.options, nodeId: this.profile.id })
+          : this.startRun("master", { ...body.options, nodeId: this.profile.id })) });
+      } catch (error) { sendJson(response, error.code === "RUN_ACTIVE" ? 409 : 400, { error: error.message }); }
       return true;
     }
     const upload = /^\/api\/cluster\/results\/([^/]+)\/file$/.exec(pathname);
