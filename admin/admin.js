@@ -270,7 +270,7 @@ function renderActive(runs) {
   const stageIndex = Math.max(0, stages.indexOf(run.stage));
   const liveStage = run.cancelRequestedAt ? "Stopping pipeline" : stageLabels[run.stage] || "Starting pipeline";
   elements.activeTitle.textContent = `${run.name || "Pipeline run"} · ${run.nodeName || "Local node"} · ${computeLabel(run.computeConfig || run.computeDevice)} · ${liveStage}…`;
-  elements.activeElapsed.textContent = formatDuration(Date.now() - new Date(run.startedAt).getTime());
+  elements.activeElapsed.textContent = formatDuration(Math.max(0, Date.now() - new Date(run.startedAt).getTime()));
   elements.progressBar.style.width = `${Math.max(4, (stageIndex / stages.length) * 100 + 8)}%`;
   elements.stageList.replaceChildren(...stages.map((stage, index) => {
     const node = document.createElement("div");
