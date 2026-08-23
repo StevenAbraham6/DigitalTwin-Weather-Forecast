@@ -441,12 +441,7 @@ async function startRun() {
     });
     setMessage(elements.runMessage, `${mode === "inference" ? "Inference" : "Full pipeline"} started. Live timings will appear below.`);
     await refresh();
-    const nextNode = latestState?.nodes?.find((node) => (node.self || node.connected) && !node.active && node.pipelineReady && node.id !== launchedNodeId);
-    if (nextNode) {
-      elements.executionNode.value = nextNode.id;
-      updateComputeOptions();
-      render(latestState);
-    }
+    selectNextAvailableNode(launchedNodeId);
   } catch (error) {
     setMessage(elements.runMessage, error.message, true);
     if (latestState) render(latestState);
@@ -455,6 +450,7 @@ async function startRun() {
 
 async function queueRun() {
   const mode = elements.runMode.value;
+  const queuedNodeId = elements.executionNode.value;
   elements.queueRun.disabled = true;
   setMessage(elements.runMessage, "Adding execution to the queue…");
   try {
@@ -471,10 +467,24 @@ async function queueRun() {
     });
     setMessage(elements.runMessage, "Execution queued. Start or cancel it from execution history.");
     await refresh();
+    selectNextAvailableNode(queuedNodeId);
   } catch (error) {
     setMessage(elements.runMessage, error.message, true);
     if (latestState) render(latestState);
   }
+}
+
+function selectNextAvailableNode(previousNodeId) {
+  const nextNode = latestState?.nodes?.find((node) => (
+    (node.self || node.connected)
+    && !node.active
+    && node.pipelineReady
+    && node.id !== previousNodeId
+  ));
+  if (!nextNode) return;
+  elements.executionNode.value = nextNode.id;
+  updateComputeOptions();
+  render(latestState);
 }
 
 async function startQueuedRun(run, button) {

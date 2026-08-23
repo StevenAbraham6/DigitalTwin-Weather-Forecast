@@ -508,7 +508,11 @@ class AdminService {
   }
 
   queueRun(trigger, options = {}) {
-    if (this.activeProcess || this.state.runs.some((run) => run.status === "queued")) {
+    const queuedOnThisNode = this.state.runs.some((run) => (
+      run.status === "queued"
+      && (!run.nodeId || !options.nodeId || run.nodeId === options.nodeId)
+    ));
+    if (this.activeProcess || queuedOnThisNode) {
       const error = new Error("A pipeline execution is already running.");
       error.code = "RUN_ACTIVE";
       throw error;

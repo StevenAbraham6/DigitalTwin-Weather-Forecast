@@ -216,11 +216,22 @@ async function main() {
       const blankName = await adminRequest(service, "PATCH", "/api/admin/runs/rename-me", { name: " " });
       assert.equal(blankName.status, 400);
       assert.equal(service.state.runs[0].name, "Custom audit name");
-      const queued = service.queueRun("manual", { mode: "full", computeDevice: "cpu", steps: 8, name: "Waiting forecast" });
+      service.upsertExternalRun({
+        id: "remote-queue",
+        nodeId: "remote-node",
+        name: "Remote waiting forecast",
+        mode: "full",
+        computeDevice: "cpu",
+        trigger: "manual",
+        status: "queued",
+        queuedAt: new Date().toISOString(),
+        logs: [],
+      });
+      const queued = service.queueRun("manual", { nodeId: "local-node", mode: "full", computeDevice: "cpu", steps: 8, name: "Waiting forecast" });
       assert.equal(queued.status, "queued");
       assert.equal(queued.startedAt, null);
       assert.throws(
-        () => service.queueRun("manual", { mode: "full", computeDevice: "cpu", steps: 8 }),
+        () => service.queueRun("manual", { nodeId: "local-node", mode: "full", computeDevice: "cpu", steps: 8 }),
         /already running/,
       );
       service._recoverInterruptedRuns();
@@ -229,6 +240,7 @@ async function main() {
       assert.equal(canceledQueue.status, 202);
       assert.equal(canceledQueue.body.run.status, "canceled");
       assert.equal(service.activeProcess, null);
+      service.state.runs.find((run) => run.id === "remote-queue").status = "canceled";
       const activeStartedAt = new Date().toISOString();
       service.state.runs.unshift(
         { id: "active-1", name: "Active one", mode: "full", computeDevice: "cpu", trigger: "manual", status: "running", startedAt: activeStartedAt, logs: [] },
