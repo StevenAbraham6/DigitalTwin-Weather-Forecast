@@ -20,6 +20,11 @@ import numpy as np
 import xarray as xr
 from google.cloud import storage
 
+from forecast_engine.providers.google_graphcast.artifact_cache import (
+    default_artifact_cache_dir,
+    ensure_cached,
+)
+
 EVENT_PREFIX = "@@PIPELINE_EVENT@@"
 
 
@@ -74,6 +79,7 @@ def main() -> None:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--upstream", type=Path, required=True)
+    parser.add_argument("--artifact-cache", type=Path, default=default_artifact_cache_dir())
     parser.add_argument("--steps", type=int, default=1, help="Number of six-hour forecast intervals.")
     parser.add_argument(
         "--compute-device",
@@ -149,11 +155,13 @@ def main() -> None:
     bucket = storage.Client.create_anonymous_client().bucket("dm_graphcast")
     prefix = "graphcast/"
     name = "GraphCast_small - ERA5 1979-2015 - resolution 1.0 - pressure levels 13 - mesh 2to5 - precipitation input and output.npz"
-    with bucket.blob(prefix + "params/" + name).open("rb") as file:
+    checkpoint_path = ensure_cached(bucket, prefix + "params/" + name, args.artifact_cache)
+    with checkpoint_path.open("rb") as file:
         loaded = checkpoint.load(file, graphcast.CheckPoint)
     stats = {}
     for stat in ("diffs_stddev_by_level", "mean_by_level", "stddev_by_level"):
-        with bucket.blob(prefix + f"stats/{stat}.nc").open("rb") as file:
+        stat_path = ensure_cached(bucket, prefix + f"stats/{stat}.nc", args.artifact_cache)
+        with stat_path.open("rb") as file:
             stats[stat] = xr.load_dataset(file).compute()
     emit_timing("checkpointLoad", "Load checkpoint and statistics", checkpoint_started)
 

@@ -24,6 +24,10 @@ Run the official GraphCast Small demo and retain its prediction plus initializat
 forecast-engine run-sample --output-dir pipeline/output/sample-run
 ```
 
+The ERA5T and HRES inference runners also keep checkpoints and normalization
+statistics in the forecast-engine user cache. Each artifact is downloaded once,
+written atomically, and checksum-verified before reuse on later runs.
+
 Publish numeric UI data into the static UI's data directory (this does not modify UI source). Publishing requires the separately retained initialization state so every run begins at T+0:
 
 ```bash

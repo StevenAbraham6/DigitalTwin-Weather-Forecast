@@ -14,12 +14,18 @@ import numpy as np
 import xarray as xr
 from google.cloud import storage
 
+from forecast_engine.providers.google_graphcast.artifact_cache import (
+    default_artifact_cache_dir,
+    ensure_cached,
+)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--upstream", type=Path, required=True)
+    parser.add_argument("--artifact-cache", type=Path, default=default_artifact_cache_dir())
     args = parser.parse_args()
     sys.path.insert(0, str(args.upstream))
     from graphcast import autoregressive, casting, checkpoint, data_utils, graphcast, normalization
@@ -31,11 +37,15 @@ def main() -> None:
     bucket = storage.Client.create_anonymous_client().bucket("dm_graphcast")
     prefix = "graphcast/"
     checkpoint_name = "GraphCast_operational - ERA5-HRES 1979-2021 - resolution 0.25 - pressure levels 13 - mesh 2to6 - precipitation output only.npz"
-    with bucket.blob(prefix + "params/" + checkpoint_name).open("rb") as file:
+    checkpoint_path = ensure_cached(
+        bucket, prefix + "params/" + checkpoint_name, args.artifact_cache
+    )
+    with checkpoint_path.open("rb") as file:
         loaded = checkpoint.load(file, graphcast.CheckPoint)
     stats = {}
     for name in ("diffs_stddev_by_level", "mean_by_level", "stddev_by_level"):
-        with bucket.blob(prefix + f"stats/{name}.nc").open("rb") as file:
+        stat_path = ensure_cached(bucket, prefix + f"stats/{name}.nc", args.artifact_cache)
+        with stat_path.open("rb") as file:
             stats[name] = xr.load_dataset(file).compute()
 
     dataset = dataset.assign_coords(datetime=(("batch", "time"), datetimes[None, :]))
