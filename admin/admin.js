@@ -39,6 +39,8 @@ const elements = {
   stopMessage: document.querySelector("#stop-message"),
   progressBar: document.querySelector("#progress-bar"),
   stageList: document.querySelector("#stage-list"),
+  liveInferenceSteps: document.querySelector("#live-inference-steps"),
+  liveInferenceStepList: document.querySelector("#live-inference-step-list"),
   liveLog: document.querySelector("#live-log"),
   history: document.querySelector("#run-history"),
   emptyHistory: document.querySelector("#empty-history"),
@@ -46,12 +48,26 @@ const elements = {
   logDialog: document.querySelector("#log-dialog"),
   dialogTitle: document.querySelector("#dialog-title"),
   dialogSummary: document.querySelector("#dialog-summary"),
+  dialogInferenceSteps: document.querySelector("#dialog-inference-steps"),
+  dialogInferenceStepList: document.querySelector("#dialog-inference-step-list"),
   dialogLog: document.querySelector("#dialog-log"),
   closeDialog: document.querySelector("#close-dialog"),
 };
 
 const stages = ["download", "preparation", "inference", "publish"];
 const stageLabels = { download: "Download data", preparation: "Prepare inputs", inference: "Run inference", publish: "Validate & publish" };
+const inferenceSteps = [
+  { name: "processSetup", label: "Process and device setup" },
+  { name: "inputLoad", label: "Load prepared input" },
+  { name: "targetPreparation", label: "Prepare forecast tensors" },
+  { name: "checkpointLoad", label: "Load checkpoint and statistics" },
+  { name: "inputExtraction", label: "Extract model inputs and forcings" },
+  { name: "jaxCompilation", label: "JAX lower and compile" },
+  { name: "modelRollout", label: (run) => `GraphCast rollout (${run.steps || "—"} steps)` },
+  { name: "deviceToHost", label: "Transfer forecast to host" },
+  { name: "netcdfWrite", label: "Write native NetCDF" },
+  { name: "runnerTotal", label: "Inference runner total", total: true },
+];
 let latestState = null;
 let pollTimer = null;
 let scheduleHydrated = false;
@@ -94,6 +110,43 @@ function formatDate(value, options = {}) {
 function setMessage(element, message, error = false) {
   element.textContent = message;
   element.classList.toggle("error", error);
+}
+
+function renderInferenceSteps(container, list, run, { live = false } = {}) {
+  const timings = Array.isArray(run.inferenceTimings) ? run.inferenceTimings : [];
+  const timingsByName = new Map(timings.map((timing) => [timing.name, timing]));
+  const firstIncomplete = inferenceSteps.find((step) => !timingsByName.has(step.name))?.name;
+  const inferenceStarted = run.stage === "inference" || stages.indexOf(run.stage) > stages.indexOf("inference") || timings.length > 0;
+
+  list.replaceChildren(...inferenceSteps.map((step) => {
+    const timing = timingsByName.get(step.name);
+    const active = live && inferenceStarted && run.stage === "inference" && !timing && step.name === firstIncomplete;
+    const item = document.createElement("li");
+    item.className = `inference-step ${timing ? "complete" : active ? "active" : "pending"}${step.total ? " total" : ""}`;
+
+    const marker = document.createElement("span");
+    marker.className = "inference-step-marker";
+    marker.setAttribute("aria-hidden", "true");
+    marker.textContent = timing ? "✓" : active ? "●" : "○";
+
+    const label = document.createElement("span");
+    label.className = "inference-step-label";
+    label.textContent = timing?.label || (typeof step.label === "function" ? step.label(run) : step.label);
+
+    const duration = document.createElement("strong");
+    duration.className = "inference-step-duration";
+    duration.textContent = timing
+      ? formatDuration(timing.durationMs)
+      : active
+        ? "Running…"
+        : live
+          ? "Waiting"
+          : "Not recorded";
+
+    item.append(marker, label, duration);
+    return item;
+  }));
+  container.hidden = false;
 }
 
 async function api(path, options = {}) {
@@ -279,6 +332,7 @@ function renderActive(runs) {
     node.textContent = `${skipped ? "↷ " : index < stageIndex ? "✓ " : index === stageIndex ? "● " : "○ "}${stageLabels[stage]}${skipped ? " (reused)" : ""}`;
     return node;
   }));
+  renderInferenceSteps(elements.liveInferenceSteps, elements.liveInferenceStepList, run, { live: true });
   elements.liveLog.textContent = logText(run.logs.slice(-80));
   elements.liveLog.scrollTop = elements.liveLog.scrollHeight;
 }
@@ -397,15 +451,10 @@ function showRun(run) {
     `${run.snapshotCount == null ? "—" : run.snapshotCount.toLocaleString()} snapshots`,
     `${formatBytes(run.artifactBytes)} total artifacts`,
   ];
-  for (const timing of run.inferenceTimings || []) {
-    if (timing.name === "runnerTotal") continue;
-    items.push(`Inference · ${timing.label} ${formatDuration(timing.durationMs)}`);
-  }
-  const runnerTotal = (run.inferenceTimings || []).find((timing) => timing.name === "runnerTotal");
-  if (runnerTotal) items.push(`Inference runner total ${formatDuration(runnerTotal.durationMs)}`);
   elements.dialogSummary.replaceChildren(...items.filter(Boolean).map((text) => {
     const span = document.createElement("span"); span.textContent = text; return span;
   }));
+  renderInferenceSteps(elements.dialogInferenceSteps, elements.dialogInferenceStepList, run);
   elements.dialogLog.textContent = `${run.error ? `ERROR: ${run.error}\n\n` : ""}${logText(run.logs)}`;
   elements.logDialog.showModal();
 }

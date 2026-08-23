@@ -103,6 +103,19 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .stage.active { color: var(--text); border-color: rgba(102,240,182,.4); background: rgba(102,240,182,.07); }
 .stage.done { color: var(--green); }
 .stage.skipped { color: var(--blue); border-style: dashed; }
+.inference-steps { margin-top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(5,13,12,.42); }
+.inference-steps-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
+.inference-steps-heading small { color: var(--muted); font-size: .7rem; }
+.inference-step-list { display: grid; grid-template-columns: 1fr; margin: 0; padding: 0; list-style: none; }
+.inference-step { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 35px; border-bottom: 1px solid rgba(161,211,196,.08); color: var(--muted); font-size: .76rem; }
+.inference-step-marker { color: #58706a; font-size: .72rem; text-align: center; }
+.inference-step-duration { color: inherit; font-size: .72rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.inference-step.complete { color: #bad0c9; }
+.inference-step.complete .inference-step-marker { color: var(--green); }
+.inference-step.active { color: var(--text); }
+.inference-step.active .inference-step-marker { color: var(--blue); animation: pulse 1.3s infinite; }
+.inference-step.active .inference-step-duration { color: var(--blue); }
+.inference-step.total { border-bottom: 0; font-weight: 700; }
 .log-view { min-height: 120px; max-height: 330px; overflow: auto; margin: 18px 0 0; padding: 15px; border: 1px solid rgba(255,255,255,.06); border-radius: 11px; background: #050d0c; color: #b9d0c8; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
 
 .history-panel { padding-bottom: 13px; }
@@ -125,6 +138,7 @@ dialog { width: min(900px, calc(100% - 32px)); max-height: 86vh; padding: 24px; 
 dialog::backdrop { background: rgba(0,0,0,.7); backdrop-filter: blur(4px); }
 .dialog-heading { display: flex; justify-content: space-between; }
 .dialog-summary { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 20px 0 0; color: var(--muted); font-size: .78rem; }
+.dialog-inference-steps { background: rgba(5,13,12,.65); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
 
 .setup-panel { max-width: 1080px; margin: 20px auto; }

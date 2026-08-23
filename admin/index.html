@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#071210" />
   <title>Pipeline Control — Digital Twin Earth</title>
-  <link rel="stylesheet" href="/admin/admin.css?v=9" />
+  <link rel="stylesheet" href="/admin/admin.css?v=10" />
 </head>
 <body>
   <div class="aurora" aria-hidden="true"></div>
@@ -162,6 +162,13 @@
       <p id="stop-message" class="form-message live-run-message" role="status"></p>
       <div class="progress-track"><span id="progress-bar"></span></div>
       <div id="stage-list" class="stage-list"></div>
+      <section id="live-inference-steps" class="inference-steps" aria-labelledby="live-inference-heading">
+        <div class="inference-steps-heading">
+          <span id="live-inference-heading" class="eyebrow">Inference steps</span>
+          <small>Updates as each step finishes</small>
+        </div>
+        <ul id="live-inference-step-list" class="inference-step-list"></ul>
+      </section>
       <pre id="live-log" class="log-view" aria-label="Live pipeline log"></pre>
     </section>
 
@@ -207,9 +214,16 @@
       <button id="close-dialog" class="quiet-button" type="button">Close</button>
     </div>
     <div id="dialog-summary" class="dialog-summary"></div>
+    <section id="dialog-inference-steps" class="inference-steps dialog-inference-steps" aria-labelledby="dialog-inference-heading">
+      <div class="inference-steps-heading">
+        <span id="dialog-inference-heading" class="eyebrow">Inference steps</span>
+        <small>Completion time by step</small>
+      </div>
+      <ul id="dialog-inference-step-list" class="inference-step-list"></ul>
+    </section>
     <pre id="dialog-log" class="log-view"></pre>
   </dialog>
 
-  <script src="/admin/admin.js?v=12"></script>
+  <script src="/admin/admin.js?v=13"></script>
 </body>
 </html>
