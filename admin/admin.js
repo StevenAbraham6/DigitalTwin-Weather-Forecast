@@ -102,6 +102,17 @@ function formatDuration(milliseconds) {
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
 }
 
+function formatInferenceDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds)) return "—";
+  const roundedMilliseconds = Math.max(0, Math.round(milliseconds));
+  const hours = Math.floor(roundedMilliseconds / 3600000);
+  const minutes = Math.floor((roundedMilliseconds % 3600000) / 60000);
+  const seconds = (roundedMilliseconds % 60000) / 1000;
+  if (hours) return `${hours}h ${minutes}m ${seconds.toFixed(3)}s`;
+  if (minutes) return `${minutes}m ${seconds.toFixed(3)}s`;
+  return `${seconds.toFixed(3)}s`;
+}
+
 function formatDate(value, options = {}) {
   if (!value) return "—";
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", ...options }).format(new Date(value));
@@ -136,7 +147,7 @@ function renderInferenceSteps(container, list, run, { live = false } = {}) {
     const duration = document.createElement("strong");
     duration.className = "inference-step-duration";
     duration.textContent = timing
-      ? formatDuration(timing.durationMs)
+      ? formatInferenceDuration(timing.durationMs)
       : active
         ? "Running…"
         : live
