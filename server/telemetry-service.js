@@ -10,9 +10,17 @@ const gzipAsync = util.promisify(zlib.gzip);
 const gunzipAsync = util.promisify(zlib.gunzip);
 const SAMPLE_INTERVAL_MS = 2_000;
 const MAX_SAMPLES = 10_000;
+const MICROJOULES_PER_WH = 3_600_000_000;
 
 function finite(value) {
   const number = Number(String(value ?? "").replace(/[^0-9+-.]/g, ""));
+  return Number.isFinite(number) ? number : null;
+}
+
+function energyFinite(value) {
+  const text = String(value ?? "").trim();
+  if (!text || /^n\/?a$/i.test(text)) return null;
+  const number = Number(text.replace(/[^0-9+-.]/g, ""));
   return Number.isFinite(number) ? number : null;
 }
 
@@ -54,6 +62,14 @@ function parseNvidiaCsv(stdout) {
       powerWatts: finite(fields[6]),
       powerLimitWatts: finite(fields[7]),
     };
+  });
+}
+
+function parseNvidiaEnergyCsv(stdout) {
+  return String(stdout || "").trim().split(/\r?\n/).filter(Boolean).flatMap((line) => {
+    const fields = line.split(",").map((field) => field.trim());
+    const millijoules = energyFinite(fields[1]);
+    return millijoules === null ? [] : [{ id: fields[0] || "nvidia-0", energyMicrojoules: millijoules * 1000, maxEnergyMicrojoules: null }];
   });
 }
 
@@ -100,6 +116,103 @@ function parseAmdJson(stdout) {
       powerLimitWatts: finite(fieldByPattern(flat, [/powerlimit/])),
     };
   });
+}
+
+function parseAmdEnergyJson(stdout) {
+  let parsed;
+  try { parsed = JSON.parse(String(stdout || "{}")); } catch { return []; }
+  return amdGpuEntries(parsed).flatMap((gpu, index) => {
+    const flat = flattenObject(gpu);
+    const accumulator = energyFinite(fieldByPattern(flat, [/energyaccumulator/, /^power$/]));
+    const resolution = energyFinite(fieldByPattern(flat, [/counterresolution/]));
+    if (accumulator === null) return [];
+    const energyMicrojoules = resolution === null ? accumulator : accumulator * resolution;
+    if (!Number.isFinite(energyMicrojoules)) return [];
+    return [{
+      id: String(fieldByPattern(flat, [/uuid$/, /bdf$/, /^gpuid$/, /^gpu$/]) ?? gpu.__key ?? index),
+      energyMicrojoules,
+      maxEnergyMicrojoules: null,
+    }];
+  });
+}
+
+function readCpuEnergyCounters(root = "/sys/class/powercap") {
+  const counters = [];
+  const stack = [{ directory: root, depth: 0 }];
+  const visited = new Set();
+  while (stack.length) {
+    const { directory, depth } = stack.pop();
+    let real;
+    try { real = fs.realpathSync(directory); } catch { continue; }
+    if (visited.has(real) || depth > 3) continue;
+    visited.add(real);
+    let name = "";
+    try { name = fs.readFileSync(path.join(directory, "name"), "utf8").trim(); } catch { /* not a power zone */ }
+    if (/^package(?:-|$)/i.test(name)) {
+      try {
+        const energyMicrojoules = energyFinite(fs.readFileSync(path.join(directory, "energy_uj"), "utf8"));
+        let maxEnergyMicrojoules = null;
+        try { maxEnergyMicrojoules = energyFinite(fs.readFileSync(path.join(directory, "max_energy_range_uj"), "utf8")); } catch { /* optional */ }
+        if (energyMicrojoules !== null) counters.push({ id: name, energyMicrojoules, maxEnergyMicrojoules });
+      } catch { /* unsupported zone */ }
+    }
+    let entries = [];
+    try { entries = fs.readdirSync(directory, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (!/rapl/i.test(entry.name)) continue;
+      stack.push({ directory: path.join(directory, entry.name), depth: depth + 1 });
+    }
+  }
+  return counters;
+}
+
+function counterDeltaMicrojoules(startCounters = [], endCounters = []) {
+  const starts = new Map(startCounters.map((counter) => [counter.id, counter]));
+  const deltas = [];
+  for (const end of endCounters) {
+    const start = starts.get(end.id);
+    if (!start || !Number.isFinite(start.energyMicrojoules) || !Number.isFinite(end.energyMicrojoules)) continue;
+    let delta = end.energyMicrojoules - start.energyMicrojoules;
+    if (delta < 0 && Number.isFinite(start.maxEnergyMicrojoules)) delta += start.maxEnergyMicrojoules;
+    if (delta >= 0) deltas.push(delta);
+  }
+  return deltas.length ? deltas.reduce((sum, value) => sum + value, 0) : null;
+}
+
+function roundEnergy(value) {
+  return Number.isFinite(value) ? Math.round(value * 1e9) / 1e9 : null;
+}
+
+function energyDelta(start, end, gpuExpected = true) {
+  if (!start || !end) return null;
+  const cpuMicrojoules = counterDeltaMicrojoules(start.cpu, end.cpu);
+  const gpuMicrojoules = gpuExpected ? counterDeltaMicrojoules(start.gpus, end.gpus) : 0;
+  const cpuEnergyWh = cpuMicrojoules === null ? null : roundEnergy(cpuMicrojoules / MICROJOULES_PER_WH);
+  const gpuEnergyWh = gpuMicrojoules === null ? null : roundEnergy(gpuMicrojoules / MICROJOULES_PER_WH);
+  const totalEnergyWh = cpuEnergyWh !== null && gpuEnergyWh !== null ? roundEnergy(cpuEnergyWh + gpuEnergyWh) : null;
+  return { cpuEnergyWh, gpuEnergyWh, totalEnergyWh };
+}
+
+function integratedGpuEnergyWh(samples, startedAt, endedAt, vendor = null) {
+  const totalPower = (sample) => {
+    const values = (sample.gpus || [])
+      .filter((gpu) => !vendor || gpu.vendor === vendor)
+      .map((gpu) => gpu.powerWatts)
+      .filter(Number.isFinite);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+  };
+  const points = samples.map((sample) => ({ time: new Date(sample.sampledAt).getTime(), power: totalPower(sample) }))
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.power));
+  if (!points.length) return null;
+  const start = new Date(startedAt).getTime();
+  const end = new Date(endedAt).getTime();
+  if (Number.isFinite(start) && start < points[0].time) points.unshift({ time: start, power: points[0].power });
+  if (Number.isFinite(end) && end > points.at(-1).time) points.push({ time: end, power: points.at(-1).power });
+  let wattMilliseconds = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    wattMilliseconds += (points[index - 1].power + points[index].power) / 2 * Math.max(0, points[index].time - points[index - 1].time);
+  }
+  return roundEnergy(wattMilliseconds / 3_600_000);
 }
 
 function readCpuTemperature() {
@@ -164,15 +277,19 @@ function telemetrySummary(samples) {
 }
 
 class TelemetryService {
-  constructor({ dataRoot, intervalMs = SAMPLE_INTERVAL_MS, commandRunner = execFileAsync, autoStart = true } = {}) {
+  constructor({ dataRoot, intervalMs = SAMPLE_INTERVAL_MS, commandRunner = execFileAsync, cpuEnergyReader = readCpuEnergyCounters, autoStart = true } = {}) {
     this.root = path.join(dataRoot, "execution-telemetry");
     this.intervalMs = intervalMs;
     this.commandRunner = commandRunner;
+    this.cpuEnergyReader = cpuEnergyReader;
     this.previousCpuTimes = null;
     this.latest = null;
     this.gpuCollectors = new Set();
     this.activeRun = null;
     this.samples = [];
+    this.energyStart = null;
+    this.energyPrevious = null;
+    this.energyStartPromise = null;
     this.sampling = false;
     this.timer = null;
     fs.mkdirSync(this.root, { recursive: true });
@@ -202,6 +319,15 @@ class TelemetryService {
     if (this.activeRun?.id === run.id) return;
     this.activeRun = run;
     this.samples = [];
+    this.energyStart = null;
+    this.energyPrevious = null;
+    this.energyStartPromise = this.captureEnergy(run).then((snapshot) => {
+      if (this.activeRun?.id === run.id) {
+        this.energyStart = snapshot;
+        this.energyPrevious = snapshot;
+      }
+      return snapshot;
+    });
     this.sample();
   }
 
@@ -215,9 +341,12 @@ class TelemetryService {
       const currentTimes = cpuTimes(cpus);
       const utilizationPercent = cpuUtilization(this.previousCpuTimes, currentTimes);
       this.previousCpuTimes = currentTimes;
-      const [nvidia, amd] = await Promise.all([
+      const [nvidia, amd, energySnapshot] = await Promise.all([
         this.gpuCollectors.has("nvidia") ? this.collectNvidia() : [],
         this.gpuCollectors.has("amd") ? this.collectAmd() : [],
+        this.activeRun?.status === "running"
+          ? Promise.resolve(this.energyStartPromise).then(() => this.captureEnergy(this.activeRun))
+          : null,
       ]);
       const { totalBytes: totalMemoryBytes, usedBytes: usedMemoryBytes } = systemMemory();
       const snapshot = {
@@ -237,7 +366,7 @@ class TelemetryService {
         gpus: [...nvidia, ...amd],
       };
       this.latest = snapshot;
-      this.recordSnapshot(snapshot);
+      this.recordSnapshot(snapshot, energySnapshot);
       return snapshot;
     } finally {
       this.sampling = false;
@@ -261,9 +390,42 @@ class TelemetryService {
     } catch { return []; }
   }
 
-  recordSnapshot(snapshot) {
+  async collectNvidiaEnergy() {
+    try {
+      const { stdout } = await this.commandRunner("nvidia-smi", [
+        "--query-gpu=uuid,total_energy_consumption",
+        "--format=csv,noheader,nounits",
+      ], { timeout: 1_500, maxBuffer: 256 * 1024 });
+      return parseNvidiaEnergyCsv(stdout);
+    } catch { return []; }
+  }
+
+  async collectAmdEnergy() {
+    try {
+      const { stdout } = await this.commandRunner("amd-smi", ["metric", "-E", "--json"], { timeout: 1_500, maxBuffer: 1024 * 1024 });
+      return parseAmdEnergyJson(stdout);
+    } catch { return []; }
+  }
+
+  async captureEnergy(run = this.activeRun) {
+    let cpu = [];
+    try { cpu = this.cpuEnergyReader(); } catch { /* unsupported CPU counter */ }
+    const computeDevice = run?.computeDevice || run?.computeConfig;
+    const collectNvidia = computeDevice === "gpu_l4" || (!computeDevice && this.gpuCollectors.has("nvidia"));
+    const collectAmd = computeDevice === "gpu_amd" || (!computeDevice && this.gpuCollectors.has("amd"));
+    const [nvidia, amd] = await Promise.all([
+      collectNvidia ? this.collectNvidiaEnergy() : [],
+      collectAmd ? this.collectAmdEnergy() : [],
+    ]);
+    return { capturedAt: new Date().toISOString(), cpu, gpus: [...nvidia, ...amd] };
+  }
+
+  recordSnapshot(snapshot, energySnapshot = null) {
     if (!this.activeRun || this.activeRun.status !== "running" || this.samples.length >= MAX_SAMPLES) return;
     const started = new Date(this.activeRun.startedAt).getTime();
+    const gpuExpected = this.activeRun.computeDevice !== "cpu";
+    const intervalEnergy = energySnapshot ? energyDelta(this.energyPrevious, energySnapshot, gpuExpected) : null;
+    if (energySnapshot) this.energyPrevious = energySnapshot;
     this.samples.push({
       elapsedMs: Math.max(0, new Date(snapshot.sampledAt).getTime() - started),
       sampledAt: snapshot.sampledAt,
@@ -279,7 +441,9 @@ class TelemetryService {
         memoryTotalBytes: gpu.memoryTotalBytes,
         memoryPercent: gpu.memoryPercent,
         temperatureC: gpu.temperatureC,
+        powerWatts: gpu.powerWatts,
       })),
+      energy: intervalEnergy,
     });
   }
 
@@ -289,17 +453,39 @@ class TelemetryService {
       return null;
     }
     const samples = this.samples;
+    const energyStart = await Promise.resolve(this.energyStartPromise);
+    const energyEnd = await this.captureEnergy(run);
+    const gpuExpected = run.computeDevice !== "cpu";
+    const counterEnergy = energyDelta(energyStart, energyEnd, gpuExpected);
+    const gpuVendor = run.computeDevice === "gpu_l4" ? "nvidia" : run.computeDevice === "gpu_amd" ? "amd" : null;
+    const sampledGpuEnergyWh = gpuExpected && counterEnergy?.gpuEnergyWh === null
+      ? integratedGpuEnergyWh(samples, run.startedAt, run.endedAt, gpuVendor)
+      : null;
+    const cpuEnergyWh = counterEnergy?.cpuEnergyWh ?? null;
+    const gpuEnergyWh = gpuExpected ? counterEnergy?.gpuEnergyWh ?? sampledGpuEnergyWh : 0;
+    const totalEnergyWh = cpuEnergyWh !== null && gpuEnergyWh !== null ? roundEnergy(cpuEnergyWh + gpuEnergyWh) : null;
+    const energy = {
+      cpuEnergyWh,
+      gpuEnergyWh,
+      totalEnergyWh,
+      cpuMeasurement: cpuEnergyWh === null ? "unavailable" : "hardware_counter",
+      gpuMeasurement: !gpuExpected ? "not_used" : counterEnergy?.gpuEnergyWh !== null ? "hardware_counter" : sampledGpuEnergyWh !== null ? "sampled_power" : "unavailable",
+    };
     this.activeRun = null;
     this.samples = [];
+    this.energyStart = null;
+    this.energyPrevious = null;
+    this.energyStartPromise = null;
+    const summary = { ...telemetrySummary(samples), energy };
     const document = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: run.id,
       nodeId: run.nodeId || null,
       startedAt: run.startedAt,
       endedAt: run.endedAt,
       sampleIntervalMs: this.intervalMs,
       samples,
-      summary: telemetrySummary(samples),
+      summary,
     };
     const content = await gzipAsync(Buffer.from(JSON.stringify(document)));
     await fs.promises.writeFile(this.filePath(run.id), content);
@@ -307,7 +493,7 @@ class TelemetryService {
       available: true,
       sampleCount: samples.length,
       sampleIntervalMs: this.intervalMs,
-      summary: document.summary,
+      summary,
     };
     return run.telemetry;
   }
@@ -328,6 +514,12 @@ module.exports = {
   cpuTimes,
   cpuUtilization,
   parseAmdJson,
+  parseAmdEnergyJson,
   parseNvidiaCsv,
+  parseNvidiaEnergyCsv,
+  readCpuEnergyCounters,
+  counterDeltaMicrojoules,
+  energyDelta,
+  integratedGpuEnergyWh,
   telemetrySummary,
 };

@@ -125,6 +125,13 @@ function formatDate(value, options = {}) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", ...options }).format(new Date(value));
 }
 
+function formatEnergy(wattHours) {
+  if (!Number.isFinite(wattHours)) return "—";
+  if (wattHours >= 1000) return `${(wattHours / 1000).toFixed(wattHours >= 10000 ? 1 : 2)} kWh`;
+  if (wattHours >= 1) return `${wattHours.toFixed(wattHours >= 100 ? 1 : 2)} Wh`;
+  return `${(wattHours * 1000).toFixed(wattHours >= 0.1 ? 1 : 2)} mWh`;
+}
+
 function setMessage(element, message, error = false) {
   element.textContent = message;
   element.classList.toggle("error", error);
@@ -259,6 +266,10 @@ function updateComputeOptions() {
 function formatPercent(value) { return Number.isFinite(value) ? `${Math.round(value)}%` : "—"; }
 function formatTemperature(value) { return Number.isFinite(value) ? `${Math.round(value)}°C` : "—"; }
 function formatPower(value) { return Number.isFinite(value) ? `${Math.round(value)} W` : "—"; }
+function configuredCoreCount(configs = []) {
+  const match = configs.map((config) => /^cpu_(\d+)c$/.exec(config)).find(Boolean);
+  return match ? Number(match[1]) : null;
+}
 
 function liveStat(label, value, fillPercent, className = "") {
   const stat = document.createElement("div");
@@ -311,7 +322,7 @@ function renderNodeTelemetry(nodes) {
     detail.textContent = [
       node.serverModel,
       telemetry?.cpu?.model,
-      Number.isFinite(telemetry?.cpu?.logicalCores) ? `${telemetry.cpu.logicalCores} logical cores` : null,
+      Number.isFinite(configuredCoreCount(node.config)) ? `${configuredCoreCount(node.config)} cores` : null,
     ].filter(Boolean).join(" · ");
     const configs = document.createElement("div");
     configs.className = "node-configs";
@@ -563,27 +574,38 @@ async function saveRunName(run, input) {
 function showRun(run) {
   selectedDialogRun = run;
   elements.dialogTitle.textContent = run.name || run.publishedRunId || `Execution ${run.id.slice(0, 8)}`;
-  const items = [
-    `${capitalize(run.trigger)} · ${run.mode === "inference" ? "Inference only · reused base data" : "Full pipeline"}`,
-    `Node ${run.nodeName || "Local node"} · ${run.serverModel || ""}`,
-    `Compute ${computeLabel(run.computeConfig || run.computeDevice)}`,
-    `Queued ${formatDate(run.queuedAt)}`,
-    `Started ${formatDate(run.startedAt)}`,
-    `Ended ${formatDate(run.endedAt)}`,
-    `Total ${formatDuration(run.durationMs)}`,
-    run.mode === "inference" ? "Download Reused" : `Download ${formatDuration(run.downloadDurationMs)}`,
-    run.mode === "inference" ? "Preparation Reused" : `Preparation ${formatDuration(run.preparationDurationMs)}`,
-    `Inference ${formatDuration(run.inferenceDurationMs)}`,
-    run.inferenceBackend
-      ? `Backend ${run.inferenceBackend.toUpperCase()}${run.inferenceDevice ? ` · ${run.inferenceDevice}` : ""}`
-      : null,
-    `Publish ${formatDuration(run.publishDurationMs)}`,
-    `${run.snapshotCount == null ? "—" : run.snapshotCount.toLocaleString()} snapshots`,
-    `${formatBytes(run.artifactBytes)} total artifacts`,
+  const energy = run.telemetry?.summary?.energy || {};
+  const snapshotEnergyWh = Number.isFinite(energy.totalEnergyWh) && run.snapshotCount > 0
+    ? energy.totalEnergyWh / run.snapshotCount
+    : null;
+  const details = [
+    ["Model", run.modelName || "GraphCast Small"],
+    ["Compute used", computeLabel(run.computeConfig || run.computeDevice)],
+    ["Start date & time", formatDate(run.startedAt)],
+    ["Total time", formatDuration(run.durationMs)],
+    ["Download & preparation", run.mode === "inference" ? "Reused" : "Not reused"],
+    ["Inference time", formatDuration(run.inferenceDurationMs)],
+    ["Publish time", formatDuration(run.publishDurationMs)],
+    ["Snapshot count", run.snapshotCount == null ? "—" : run.snapshotCount.toLocaleString()],
   ];
-  elements.dialogSummary.replaceChildren(...items.filter(Boolean).map((text) => {
-    const span = document.createElement("span"); span.textContent = text; return span;
-  }));
+  const energyDetails = [
+    ["Total energy", formatEnergy(energy.totalEnergyWh)],
+    ["CPU energy", formatEnergy(energy.cpuEnergyWh)],
+    ["GPU energy", formatEnergy(energy.gpuEnergyWh)],
+    ["Energy / snapshot", formatEnergy(snapshotEnergyWh)],
+  ];
+  const row = ([label, value]) => {
+    const item = document.createElement("div");
+    item.className = "dialog-summary-row";
+    const term = document.createElement("dt"); term.textContent = label;
+    const description = document.createElement("dd"); description.textContent = value;
+    item.append(term, description);
+    return item;
+  };
+  const energyHeading = document.createElement("div");
+  energyHeading.className = "dialog-summary-section";
+  energyHeading.textContent = "Energy";
+  elements.dialogSummary.replaceChildren(...details.map(row), energyHeading, ...energyDetails.map(row));
   renderInferenceSteps(elements.dialogInferenceSteps, elements.dialogInferenceStepList, run);
   elements.dialogLog.textContent = `${run.error ? `ERROR: ${run.error}\n\n` : ""}${logText(run.logs)}`;
   elements.telemetryContent.hidden = true;
@@ -720,6 +742,40 @@ function drawTelemetryChart(canvas, samples, series, { percentScale = false, hov
       context.arc(hoverX, y(value), 3, 0, Math.PI * 2);
       context.fill();
     }
+    const tooltipValues = series
+      .map((item) => ({ ...item, value: item.values[hoverIndex] }))
+      .filter((item) => Number.isFinite(item.value));
+    if (tooltipValues.length) {
+      const title = `${elapsedLabel(samples[hoverIndex].elapsedMs)} · ${stageLabels[samples[hoverIndex].stage] || capitalize(samples[hoverIndex].stage)}`;
+      const valueSuffix = percentScale ? "%" : "°C";
+      const lines = tooltipValues.map((item) => `${item.label}: ${Math.round(item.value * 10) / 10}${valueSuffix}`);
+      context.font = "10px system-ui";
+      const tooltipWidth = Math.max(130, ...[title, ...lines].map((line) => context.measureText(line).width + 28));
+      const tooltipHeight = 25 + lines.length * 17;
+      const tooltipX = hoverX + tooltipWidth + 12 < width - bounds.right
+        ? hoverX + 8
+        : hoverX - tooltipWidth - 8;
+      const tooltipY = bounds.top + 15;
+      context.fillStyle = "rgba(5,13,12,.94)";
+      context.strokeStyle = "rgba(161,211,196,.28)";
+      context.lineWidth = 1;
+      context.fillRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight);
+      context.strokeRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight);
+      context.fillStyle = "#eef8f4";
+      context.textAlign = "left";
+      context.font = "600 10px system-ui";
+      context.fillText(title, tooltipX + 10, tooltipY + 15);
+      context.font = "10px system-ui";
+      tooltipValues.forEach((item, index) => {
+        const lineY = tooltipY + 32 + index * 17;
+        context.fillStyle = item.color;
+        context.beginPath();
+        context.arc(tooltipX + 11, lineY - 3, 3, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "#b9d0c8";
+        context.fillText(lines[index], tooltipX + 20, lineY);
+      });
+    }
   }
 }
 
@@ -743,6 +799,7 @@ function redrawTelemetryCharts(hoverIndex = null) {
     gpu ? `GPU ${formatPercent(gpu.utilizationPercent)}` : null,
     gpu ? `VRAM ${formatPercent(gpu.memoryPercent)}` : null,
     Number.isFinite(gpu?.temperatureC) ? `GPU ${formatTemperature(gpu.temperatureC)}` : null,
+    Number.isFinite(sample.energy?.totalEnergyWh) ? `Energy ${formatEnergy(sample.energy.totalEnergyWh)}` : null,
   ].filter(Boolean).join(" · ");
 }
 
