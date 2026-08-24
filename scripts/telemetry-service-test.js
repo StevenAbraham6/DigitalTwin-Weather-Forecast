@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { ruleForGroup } = require("./setup-energy-access.js");
 const {
   TelemetryService,
   counterDeltaMicrojoules,
@@ -14,6 +15,8 @@ const {
 } = require("../server/telemetry-service.js");
 
 async function main() {
+  assert.match(ruleForGroup(1000), /chgrp 1000/);
+  assert.match(ruleForGroup(1000), /intel-rapl/);
   assert.equal(cpuUtilization(
     { user: 100, sys: 100, idle: 800 },
     { user: 200, sys: 150, idle: 950 },

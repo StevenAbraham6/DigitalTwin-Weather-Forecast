@@ -4,8 +4,8 @@
   "private": true,
   "description": "Digital Twin Earth display and local iPad controller",
   "scripts": {
-    "start": "node server/server.js",
-    "check": "node --check server/server.js && node --check server/admin-service.js && node --check server/cluster-service.js && node --check server/telemetry-service.js && node --check admin/admin.js && node --check shared/protocol.js && node --check shared/forecast-binary.js && node --check main.js && node --check controller/controller.js && node --check scripts/forecast-binary-test.js && node --check scripts/telemetry-service-test.js",
+    "start": "node scripts/start.js",
+    "check": "node --check server/server.js && node --check server/admin-service.js && node --check server/cluster-service.js && node --check server/telemetry-service.js && node --check admin/admin.js && node --check shared/protocol.js && node --check shared/forecast-binary.js && node --check main.js && node --check controller/controller.js && node --check scripts/forecast-binary-test.js && node --check scripts/telemetry-service-test.js && node --check scripts/setup-energy-access.js && node --check scripts/start.js",
     "test": "npm run check && npm run test:forecast-binary && npm run test:admin && npm run test:cluster && npm run test:telemetry",
     "test:forecast-binary": "node scripts/forecast-binary-test.js",
     "test:admin": "node scripts/admin-service-test.js",
@@ -13,6 +13,7 @@
     "test:telemetry": "node scripts/telemetry-service-test.js",
     "pipeline:setup": "python3.11 -m venv pipeline/.venv && pipeline/.venv/bin/python -m pip install --upgrade pip && pipeline/.venv/bin/python -m pip install -e 'pipeline[graphcast,cpu,era5,dev]'",
     "pipeline:setup:amd": "python3.12 -m venv pipeline/.venv-amd && pipeline/.venv-amd/bin/python -m pip install --upgrade pip && pipeline/.venv-amd/bin/python -m pip install -e 'pipeline[graphcast,era5,dev]' && pipeline/.venv-amd/bin/python pipeline/scripts/setup_amd_jax.py",
+    "setup:energy-access": "node scripts/setup-energy-access.js",
     "pipeline:test": "pipeline/.venv/bin/python -m pytest pipeline/tests",
     "smoke": "node scripts/controller-smoke-test.js"
   },

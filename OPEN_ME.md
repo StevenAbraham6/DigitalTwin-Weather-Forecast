@@ -16,6 +16,10 @@ Then start the server:
 npm start
 ```
 
+On the first start of each Intel Linux execution node, this same command asks
+for administrator access once to enable CPU energy monitoring. The permission
+is retained across restarts, reboots, and later code updates.
+
 Open `http://localhost:8080/admin/` and confirm whether this process is the
 master or a slave. This confirmation is required after every server start;
 the last node profile is retained to prefill the form.
