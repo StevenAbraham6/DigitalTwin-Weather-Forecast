@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { Readable } = require("node:stream");
+const zlib = require("node:zlib");
 const {
   ClusterService,
   computeDeviceFor,
@@ -62,11 +63,11 @@ class FakeAdminService {
 }
 
 async function call(service, method, pathname, body, headers = {}) {
-  const payload = body === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(body));
+  const payload = body === undefined ? Buffer.alloc(0) : Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body));
   const request = Readable.from(payload.length ? [payload] : []);
   request.method = method;
   request.url = pathname;
-  request.headers = { host: "localhost:8080", ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers };
+  request.headers = { host: "localhost:8080", ...(body === undefined || Buffer.isBuffer(body) ? {} : { "content-type": "application/json" }), ...headers };
   let status;
   let responseBody;
   const response = {
@@ -93,11 +94,18 @@ async function main() {
       assert.equal(master.isConfigured(), false, "saved profiles must still require confirmation for each process start");
       master.configure({ role: "master", name: "Primary", serverModel: "XE150c M8", config: ["cpu_20c", "gpu_l4"] });
       const slaveProfile = { id: "slave-1", role: "slave", name: "Edge 1", serverModel: "XE130c M8", config: ["cpu_12c", "gpu_amd"], masterUrl: "http://127.0.0.1:8080" };
-      const registered = await call(master, "POST", "/api/cluster/register", { profile: slaveProfile, baseUrl: "http://127.0.0.1:8081", pipeline: { ready: true } });
+      const heartbeatTelemetry = {
+        sampledAt: new Date().toISOString(),
+        cpu: { model: "AMD EPYC", logicalCores: 24, utilizationPercent: 42, temperatureC: 58 },
+        memory: { usedBytes: 64, totalBytes: 128, utilizationPercent: 50 },
+        gpus: [{ id: "gpu-1", vendor: "amd", name: "R9700", utilizationPercent: 75, memoryPercent: 60, temperatureC: 70 }],
+      };
+      const registered = await call(master, "POST", "/api/cluster/register", { profile: slaveProfile, baseUrl: "http://127.0.0.1:8081", pipeline: { ready: true }, telemetry: heartbeatTelemetry });
       assert.equal(registered.status, 200);
       assert.ok(registered.body.token);
       const nodes = await master.status();
       assert.deepEqual(nodes.nodes.map((node) => node.name), ["Primary", "Edge 1"]);
+      assert.equal(nodes.nodes[1].telemetry.cpu.utilizationPercent, 42);
       assert.deepEqual(master.validateCompute(nodes.nodes[1], "gpu_amd"), { computeConfig: "gpu_amd", computeDevice: "gpu_amd" });
 
       const originalFetch = global.fetch;
@@ -179,6 +187,23 @@ async function main() {
       }, { authorization: `Bearer ${registered.body.token}` });
       assert.equal(updated.status, 200);
       assert.equal(admin.runs[0].nodeName, "Edge 1");
+
+      const telemetryDocument = {
+        schemaVersion: 1,
+        runId: "run-1",
+        nodeId: "slave-1",
+        sampleIntervalMs: 2000,
+        samples: [{ elapsedMs: 0, stage: "inference", cpu: { utilizationPercent: 50 }, memory: { utilizationPercent: 40 }, gpus: [] }],
+        summary: {},
+      };
+      const telemetryUpload = await call(master, "PUT", "/api/cluster/telemetry/run-1", zlib.gzipSync(JSON.stringify(telemetryDocument)), {
+        authorization: `Bearer ${registered.body.token}`,
+        "content-type": "application/gzip",
+      });
+      assert.equal(telemetryUpload.status, 200);
+      const telemetryRead = await call(master, "GET", "/api/admin/runs/run-1/telemetry");
+      assert.equal(telemetryRead.status, 200);
+      assert.equal(telemetryRead.body.samples[0].stage, "inference");
 
       const slaveAdmin = new FakeAdminService();
       slaveAdmin.runs.push({ id: "slave-local", nodeId: "slave-1", status: "running", logs: [] });

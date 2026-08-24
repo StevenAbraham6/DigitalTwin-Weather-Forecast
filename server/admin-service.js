@@ -308,6 +308,10 @@ class AdminService {
     atomicWriteJson(this.statePath, this.state);
   }
 
+  persistRunState() {
+    this._save();
+  }
+
   _notifyRunUpdated(run, finished = false) {
     if (!this.onRunUpdated) return;
     Promise.resolve(this.onRunUpdated(run, finished)).catch((error) => {

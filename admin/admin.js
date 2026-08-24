@@ -8,16 +8,9 @@ const elements = {
   masterUrl: document.querySelector("#master-url"),
   saveNode: document.querySelector("#save-node"),
   setupMessage: document.querySelector("#setup-message"),
-  currentNode: document.querySelector("#current-node"),
-  currentNodeDetail: document.querySelector("#current-node-detail"),
+  nodeTelemetryGrid: document.querySelector("#node-telemetry-grid"),
   executionNode: document.querySelector("#execution-node"),
   pipelineStatus: document.querySelector("#pipeline-status"),
-  snapshotStorage: document.querySelector("#snapshot-storage"),
-  snapshotDetail: document.querySelector("#snapshot-detail"),
-  lastRun: document.querySelector("#last-run"),
-  lastRunDetail: document.querySelector("#last-run-detail"),
-  nextRun: document.querySelector("#next-run"),
-  nextRunDetail: document.querySelector("#next-run-detail"),
   runNow: document.querySelector("#run-now"),
   queueRun: document.querySelector("#queue-run"),
   runName: document.querySelector("#run-name"),
@@ -51,6 +44,18 @@ const elements = {
   dialogInferenceSteps: document.querySelector("#dialog-inference-steps"),
   dialogInferenceStepList: document.querySelector("#dialog-inference-step-list"),
   dialogLog: document.querySelector("#dialog-log"),
+  dialogTelemetry: document.querySelector("#dialog-telemetry"),
+  loadTelemetry: document.querySelector("#load-telemetry"),
+  telemetryMessage: document.querySelector("#telemetry-message"),
+  telemetryContent: document.querySelector("#telemetry-content"),
+  telemetrySummary: document.querySelector("#telemetry-summary"),
+  telemetryHover: document.querySelector("#telemetry-hover"),
+  utilizationChart: document.querySelector("#utilization-chart"),
+  utilizationLegend: document.querySelector("#utilization-legend"),
+  memoryChart: document.querySelector("#memory-chart"),
+  memoryLegend: document.querySelector("#memory-legend"),
+  temperatureChart: document.querySelector("#temperature-chart"),
+  temperatureLegend: document.querySelector("#temperature-legend"),
   closeDialog: document.querySelector("#close-dialog"),
 };
 
@@ -73,6 +78,8 @@ let pollTimer = null;
 let scheduleHydrated = false;
 let nodeOptionsSignature = "";
 let selectedActiveRunId = null;
+let selectedDialogRun = null;
+let telemetryChartState = null;
 
 const configLabels = {
   cpu_12c: "CPU 12c",
@@ -249,8 +256,133 @@ function updateComputeOptions() {
   updateRunAvailability();
 }
 
+function formatPercent(value) { return Number.isFinite(value) ? `${Math.round(value)}%` : "—"; }
+function formatTemperature(value) { return Number.isFinite(value) ? `${Math.round(value)}°C` : "—"; }
+function formatPower(value) { return Number.isFinite(value) ? `${Math.round(value)} W` : "—"; }
+
+function liveStat(label, value, fillPercent, className = "") {
+  const stat = document.createElement("div");
+  stat.className = `live-stat ${className}`;
+  const heading = document.createElement("div");
+  heading.className = "live-stat-heading";
+  const name = document.createElement("span");
+  name.textContent = label;
+  const reading = document.createElement("strong");
+  reading.textContent = value;
+  heading.append(name, reading);
+  const bar = document.createElement("div");
+  bar.className = "live-stat-bar";
+  const fill = document.createElement("span");
+  fill.style.width = `${Number.isFinite(fillPercent) ? Math.max(0, Math.min(100, fillPercent)) : 0}%`;
+  bar.append(fill);
+  stat.append(heading, bar);
+  return stat;
+}
+
+function renderNodeTelemetry(nodes) {
+  elements.nodeTelemetryGrid.replaceChildren(...nodes.map((node) => {
+    const telemetry = node.telemetry;
+    const card = document.createElement("article");
+    const selectable = node.self || node.connected;
+    card.className = `node-card ${node.active ? "busy" : ""} ${node.connected ? "" : "offline"} ${selectable ? "selectable" : ""} ${node.id === elements.executionNode.value ? "selected" : ""}`;
+    if (selectable) {
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.setAttribute("aria-label", `Select ${node.name} for execution`);
+      const select = () => {
+        elements.executionNode.value = node.id;
+        updateComputeOptions();
+        if (latestState) render(latestState);
+      };
+      card.addEventListener("click", select);
+      card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") select(); });
+    }
+
+    const header = document.createElement("div");
+    header.className = "node-card-header";
+    const title = document.createElement("div");
+    title.className = "node-card-title";
+    const role = document.createElement("span");
+    role.className = "node-role";
+    role.textContent = `${capitalize(node.role)}${node.self ? " · this server" : ""}`;
+    const heading = document.createElement("h3");
+    heading.textContent = node.name;
+    const detail = document.createElement("p");
+    detail.textContent = [
+      node.serverModel,
+      telemetry?.cpu?.model,
+      Number.isFinite(telemetry?.cpu?.logicalCores) ? `${telemetry.cpu.logicalCores} logical cores` : null,
+    ].filter(Boolean).join(" · ");
+    const configs = document.createElement("div");
+    configs.className = "node-configs";
+    configs.replaceChildren(...node.config.map((config) => {
+      const chip = document.createElement("span");
+      chip.className = "node-config-chip";
+      chip.textContent = configLabels[config] || config;
+      return chip;
+    }));
+    title.append(role, heading, detail, configs);
+    const state = document.createElement("span");
+    state.className = "node-state";
+    state.textContent = !node.connected ? "Offline" : node.active ? "Pipeline running" : "Online";
+    header.append(title, state);
+
+    const grid = document.createElement("div");
+    grid.className = "node-live-grid";
+    if (!node.connected || !telemetry) {
+      const unavailable = document.createElement("div");
+      unavailable.className = "telemetry-unavailable";
+      unavailable.textContent = node.connected ? "Waiting for the first hardware sample…" : `Last heartbeat ${formatDate(node.lastSeen)}`;
+      grid.append(unavailable);
+    } else {
+      grid.append(
+        liveStat("CPU", formatPercent(telemetry.cpu?.utilizationPercent), telemetry.cpu?.utilizationPercent),
+        liveStat(
+          "System RAM",
+          `${formatBytes(telemetry.memory?.usedBytes)} / ${formatBytes(telemetry.memory?.totalBytes)}`,
+          telemetry.memory?.utilizationPercent,
+        ),
+      );
+      if (Number.isFinite(telemetry.cpu?.temperatureC)) {
+        grid.append(liveStat("CPU temperature", formatTemperature(telemetry.cpu.temperatureC), telemetry.cpu.temperatureC, "temperature"));
+      }
+      for (const gpu of telemetry.gpus || []) {
+        const block = document.createElement("section");
+        block.className = "gpu-live-block";
+        const gpuTitle = document.createElement("div");
+        gpuTitle.className = "gpu-live-title";
+        const gpuName = document.createElement("strong");
+        gpuName.textContent = gpu.name;
+        const vendor = document.createElement("small");
+        vendor.textContent = String(gpu.vendor || "GPU").toUpperCase();
+        gpuTitle.append(gpuName, vendor);
+        block.append(
+          gpuTitle,
+          liveStat("GPU", formatPercent(gpu.utilizationPercent), gpu.utilizationPercent),
+          liveStat("VRAM", `${formatBytes(gpu.memoryUsedBytes)} / ${formatBytes(gpu.memoryTotalBytes)}`, gpu.memoryPercent),
+          liveStat("Temperature", formatTemperature(gpu.temperatureC), gpu.temperatureC, "temperature"),
+          liveStat("Power", formatPower(gpu.powerWatts), Number.isFinite(gpu.powerWatts) && gpu.powerLimitWatts ? gpu.powerWatts / gpu.powerLimitWatts * 100 : 0),
+        );
+        grid.append(block);
+      }
+      if (!(telemetry.gpus || []).length && node.config.some((config) => config.startsWith("gpu_"))) {
+        const unavailable = document.createElement("div");
+        unavailable.className = "telemetry-unavailable";
+        unavailable.textContent = "GPU telemetry tool or driver is not available.";
+        grid.append(unavailable);
+      }
+      const sampled = document.createElement("small");
+      sampled.className = "node-sampled-at";
+      sampled.textContent = `Sampled ${new Date(telemetry.sampledAt).toLocaleTimeString()}`;
+      grid.append(sampled);
+    }
+    card.append(header, grid);
+    return card;
+  }));
+}
+
 function render(state) {
-  const { pipeline, storage, schedule, runs, currentRun } = state;
+  const { pipeline, schedule, runs, currentRun } = state;
   const activeRuns = state.activeRuns || (currentRun ? [currentRun] : []);
   const connectedNodes = state.nodes.filter((node) => node.self || node.connected);
   const activeNodeCount = connectedNodes.filter((node) => node.active).length;
@@ -262,8 +394,7 @@ function render(state) {
     ? ` ${activeNodeCount} of ${connectedNodes.length} nodes busy`
     : selectedNode?.pipelineReady ? " Pipeline ready" : " Setup required";
   elements.displayLink.hidden = state.node.role !== "master";
-  elements.currentNode.textContent = state.node.name;
-  elements.currentNodeDetail.textContent = `${capitalize(state.node.role)} · ${state.node.serverModel} · ${state.node.config.map((item) => configLabels[item] || item).join(", ")}`;
+  renderNodeTelemetry(state.nodes);
   elements.runMode.querySelector('option[value="inference"]').disabled = !selectedNode?.reusableBaseData;
   if (selectedNode?.reusableBaseData) {
     elements.reusableData.textContent = `Reusable base data on ${selectedNode.name}: ERA5T ${formatDate(selectedNode.reusableBaseData.initializationTime)}`;
@@ -276,19 +407,6 @@ function render(state) {
   elements.runMode.disabled = selectedActive;
   elements.computeDevice.disabled = selectedActive;
   elements.forecastSteps.disabled = selectedActive;
-  elements.snapshotStorage.textContent = formatBytes(storage.snapshotBytes);
-  elements.snapshotDetail.textContent = `${storage.snapshotCount.toLocaleString()} UI snapshots retained`;
-
-  const last = runs.find((run) => ["complete", "failed", "canceled"].includes(run.status));
-  elements.lastRun.textContent = last ? formatDate(last.endedAt || last.startedAt) : "—";
-  elements.lastRunDetail.textContent = last ? `${capitalize(last.status)} · ${formatDuration(last.durationMs)}` : "No execution history yet";
-  if (schedule.enabled && schedule.nextRunAt) {
-    elements.nextRun.textContent = formatDate(schedule.nextRunAt);
-    elements.nextRunDetail.textContent = `${schedule.mode === "inference" ? "Inference only" : "Full pipeline"} · ${computeLabel(schedule.computeConfig || schedule.computeDevice)} · ${schedule.steps} frames · ${schedule.runsPerPeriod} ${schedule.runsPerPeriod === 1 ? "time" : "times"} per ${schedule.period}`;
-  } else {
-    elements.nextRun.textContent = "Off";
-    elements.nextRunDetail.textContent = "No recurring schedule";
-  }
   if (!scheduleHydrated) {
     elements.scheduleEnabled.checked = schedule.enabled;
     elements.runName.value = schedule.namePrefix;
@@ -443,6 +561,7 @@ async function saveRunName(run, input) {
 }
 
 function showRun(run) {
+  selectedDialogRun = run;
   elements.dialogTitle.textContent = run.name || run.publishedRunId || `Execution ${run.id.slice(0, 8)}`;
   const items = [
     `${capitalize(run.trigger)} · ${run.mode === "inference" ? "Inference only · reused base data" : "Full pipeline"}`,
@@ -467,7 +586,232 @@ function showRun(run) {
   }));
   renderInferenceSteps(elements.dialogInferenceSteps, elements.dialogInferenceStepList, run);
   elements.dialogLog.textContent = `${run.error ? `ERROR: ${run.error}\n\n` : ""}${logText(run.logs)}`;
+  elements.telemetryContent.hidden = true;
+  telemetryChartState = null;
+  elements.telemetryHover.textContent = "Move across a graph to inspect a synchronized point in time.";
+  elements.telemetrySummary.replaceChildren();
+  elements.loadTelemetry.hidden = !run.telemetry?.available;
+  elements.loadTelemetry.disabled = false;
+  elements.loadTelemetry.textContent = "Load graphs";
+  elements.telemetryMessage.classList.remove("error");
+  elements.telemetryMessage.textContent = run.telemetry?.available
+    ? `${run.telemetry.sampleCount.toLocaleString()} hardware samples are available. Graphs load on request.`
+    : run.status === "running"
+      ? "Telemetry will be available after this execution finishes."
+      : "No hardware telemetry was recorded for this execution.";
   elements.logDialog.showModal();
+}
+
+const chartColors = ["#66f0b6", "#55c8ed", "#f7c66b", "#d790ff", "#ff7e7e"];
+
+function elapsedLabel(milliseconds) {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  return `${minutes}:${String(totalSeconds % 60).padStart(2, "0")}`;
+}
+
+function chartSeries(telemetryDocument, kind) {
+  const samples = telemetryDocument.samples || [];
+  const gpuIds = [...new Set(samples.flatMap((sample) => sample.gpus || []).map((gpu) => gpu.id))];
+  const gpuName = (id) => samples.flatMap((sample) => sample.gpus || []).find((gpu) => gpu.id === id)?.name || "GPU";
+  if (kind === "utilization") return [
+    { label: "CPU", color: chartColors[0], values: samples.map((sample) => sample.cpu?.utilizationPercent) },
+    ...gpuIds.map((id, index) => ({ label: gpuName(id), color: chartColors[index + 1] || chartColors.at(-1), values: samples.map((sample) => sample.gpus?.find((gpu) => gpu.id === id)?.utilizationPercent) })),
+  ];
+  if (kind === "memory") return [
+    { label: "System RAM", color: chartColors[0], values: samples.map((sample) => sample.memory?.utilizationPercent) },
+    ...gpuIds.map((id, index) => ({ label: `${gpuName(id)} VRAM`, color: chartColors[index + 1] || chartColors.at(-1), values: samples.map((sample) => sample.gpus?.find((gpu) => gpu.id === id)?.memoryPercent) })),
+  ];
+  return [
+    { label: "CPU", color: chartColors[0], values: samples.map((sample) => sample.cpu?.temperatureC) },
+    ...gpuIds.map((id, index) => ({ label: gpuName(id), color: chartColors[index + 1] || chartColors.at(-1), values: samples.map((sample) => sample.gpus?.find((gpu) => gpu.id === id)?.temperatureC) })),
+  ];
+}
+
+function renderLegend(element, series) {
+  element.replaceChildren(...series.filter((item) => item.values.some(Number.isFinite)).map((item) => {
+    const label = document.createElement("span");
+    label.style.setProperty("--legend-color", item.color);
+    label.textContent = item.label;
+    return label;
+  }));
+}
+
+function drawTelemetryChart(canvas, samples, series, { percentScale = false, hoverIndex = null } = {}) {
+  const ratio = window.devicePixelRatio || 1;
+  const width = Math.max(560, Math.floor(canvas.clientWidth || 900));
+  const height = 180;
+  canvas.width = Math.floor(width * ratio);
+  canvas.height = Math.floor(height * ratio);
+  const context = canvas.getContext("2d");
+  context.scale(ratio, ratio);
+  context.clearRect(0, 0, width, height);
+  const bounds = { left: 42, right: 12, top: 9, bottom: 24 };
+  const chartWidth = width - bounds.left - bounds.right;
+  const chartHeight = height - bounds.top - bounds.bottom;
+  const maxTime = Math.max(1, ...samples.map((sample) => sample.elapsedMs));
+  const validValues = series.flatMap((item) => item.values).filter(Number.isFinite);
+  const minimum = percentScale ? 0 : Math.max(0, Math.floor((Math.min(...validValues, 20) - 10) / 10) * 10);
+  const maximum = percentScale ? 100 : Math.max(minimum + 20, Math.ceil((Math.max(...validValues, 80) + 10) / 10) * 10);
+  const x = (elapsedMs) => bounds.left + elapsedMs / maxTime * chartWidth;
+  const y = (value) => bounds.top + (maximum - value) / (maximum - minimum) * chartHeight;
+
+  const stageColors = { download: "rgba(85,200,237,.035)", preparation: "rgba(247,198,107,.035)", inference: "rgba(102,240,182,.055)", publish: "rgba(215,144,255,.035)" };
+  samples.forEach((sample, index) => {
+    const next = samples[index + 1];
+    context.fillStyle = stageColors[sample.stage] || "transparent";
+    context.fillRect(x(sample.elapsedMs), bounds.top, x(next?.elapsedMs ?? maxTime) - x(sample.elapsedMs), chartHeight);
+  });
+  context.font = "9px system-ui";
+  context.textAlign = "left";
+  context.fillStyle = "rgba(185,208,200,.58)";
+  samples.forEach((sample, index) => {
+    if (index && samples[index - 1].stage === sample.stage) return;
+    const nextStageIndex = samples.findIndex((candidate, candidateIndex) => candidateIndex > index && candidate.stage !== sample.stage);
+    const end = nextStageIndex === -1 ? maxTime : samples[nextStageIndex].elapsedMs;
+    if (x(end) - x(sample.elapsedMs) > 48) context.fillText(stageLabels[sample.stage] || capitalize(sample.stage), x(sample.elapsedMs) + 4, bounds.top + 10);
+  });
+  context.strokeStyle = "rgba(161,211,196,.12)";
+  context.fillStyle = "#69817a";
+  context.font = "10px system-ui";
+  context.textAlign = "right";
+  for (let index = 0; index <= 4; index += 1) {
+    const value = minimum + (maximum - minimum) * index / 4;
+    const position = y(value);
+    context.beginPath();
+    context.moveTo(bounds.left, position);
+    context.lineTo(width - bounds.right, position);
+    context.stroke();
+    context.fillText(`${Math.round(value)}${percentScale ? "%" : "°"}`, bounds.left - 7, position + 3);
+  }
+  context.textAlign = "center";
+  for (let index = 0; index <= 4; index += 1) {
+    const elapsed = maxTime * index / 4;
+    context.fillText(elapsedLabel(elapsed), x(elapsed), height - 7);
+  }
+  for (const item of series) {
+    context.strokeStyle = item.color;
+    context.lineWidth = 2;
+    context.beginPath();
+    let drawing = false;
+    item.values.forEach((value, index) => {
+      if (!Number.isFinite(value)) { drawing = false; return; }
+      const pointX = x(samples[index].elapsedMs);
+      const pointY = y(value);
+      if (!drawing) context.moveTo(pointX, pointY);
+      else context.lineTo(pointX, pointY);
+      drawing = true;
+    });
+    context.stroke();
+  }
+  if (Number.isInteger(hoverIndex) && samples[hoverIndex]) {
+    const hoverX = x(samples[hoverIndex].elapsedMs);
+    context.strokeStyle = "rgba(238,248,244,.5)";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(hoverX, bounds.top);
+    context.lineTo(hoverX, bounds.top + chartHeight);
+    context.stroke();
+    for (const item of series) {
+      const value = item.values[hoverIndex];
+      if (!Number.isFinite(value)) continue;
+      context.fillStyle = item.color;
+      context.beginPath();
+      context.arc(hoverX, y(value), 3, 0, Math.PI * 2);
+      context.fill();
+    }
+  }
+}
+
+function redrawTelemetryCharts(hoverIndex = null) {
+  if (!telemetryChartState) return;
+  const { telemetryDocument, utilization, memory, temperature } = telemetryChartState;
+  drawTelemetryChart(elements.utilizationChart, telemetryDocument.samples, utilization, { percentScale: true, hoverIndex });
+  drawTelemetryChart(elements.memoryChart, telemetryDocument.samples, memory, { percentScale: true, hoverIndex });
+  drawTelemetryChart(elements.temperatureChart, telemetryDocument.samples, temperature, { hoverIndex });
+  if (!Number.isInteger(hoverIndex)) {
+    elements.telemetryHover.textContent = "Move across a graph to inspect a synchronized point in time.";
+    return;
+  }
+  const sample = telemetryDocument.samples[hoverIndex];
+  const gpu = sample.gpus?.[0];
+  elements.telemetryHover.textContent = [
+    elapsedLabel(sample.elapsedMs),
+    stageLabels[sample.stage] || capitalize(sample.stage),
+    `CPU ${formatPercent(sample.cpu?.utilizationPercent)}`,
+    `RAM ${formatPercent(sample.memory?.utilizationPercent)}`,
+    gpu ? `GPU ${formatPercent(gpu.utilizationPercent)}` : null,
+    gpu ? `VRAM ${formatPercent(gpu.memoryPercent)}` : null,
+    Number.isFinite(gpu?.temperatureC) ? `GPU ${formatTemperature(gpu.temperatureC)}` : null,
+  ].filter(Boolean).join(" · ");
+}
+
+function bindSynchronizedHover(canvas) {
+  canvas.onmousemove = (event) => {
+    if (!telemetryChartState?.telemetryDocument.samples.length) return;
+    const rectangle = canvas.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (event.clientX - rectangle.left - 42) / Math.max(1, rectangle.width - 54)));
+    const samples = telemetryChartState.telemetryDocument.samples;
+    const target = fraction * samples.at(-1).elapsedMs;
+    let closest = 0;
+    for (let index = 1; index < samples.length; index += 1) {
+      if (Math.abs(samples[index].elapsedMs - target) < Math.abs(samples[closest].elapsedMs - target)) closest = index;
+    }
+    redrawTelemetryCharts(closest);
+  };
+  canvas.onmouseleave = () => redrawTelemetryCharts();
+}
+
+function renderTelemetry(telemetryDocument) {
+  elements.telemetryContent.hidden = false;
+  const summaryLabels = {
+    cpuUtilizationPercent: ["CPU utilization", "%"],
+    systemMemoryPercent: ["System RAM", "%"],
+    gpuUtilizationPercent: ["GPU utilization", "%"],
+    gpuMemoryPercent: ["GPU VRAM", "%"],
+    cpuTemperatureC: ["CPU temperature", "°C"],
+    gpuTemperatureC: ["GPU temperature", "°C"],
+  };
+  elements.telemetrySummary.replaceChildren(...Object.entries(summaryLabels).flatMap(([key, [label, unit]]) => {
+    const value = telemetryDocument.summary?.[key];
+    if (!value) return [];
+    const item = window.document.createElement("div");
+    item.className = "telemetry-summary-item";
+    const name = window.document.createElement("span");
+    name.textContent = label;
+    const reading = window.document.createElement("strong");
+    reading.textContent = `${value.average}${unit} avg · ${value.peak}${unit} peak`;
+    item.append(name, reading);
+    return [item];
+  }));
+  const utilization = chartSeries(telemetryDocument, "utilization");
+  const memory = chartSeries(telemetryDocument, "memory");
+  const temperature = chartSeries(telemetryDocument, "temperature");
+  telemetryChartState = { telemetryDocument, utilization, memory, temperature };
+  redrawTelemetryCharts();
+  [elements.utilizationChart, elements.memoryChart, elements.temperatureChart].forEach(bindSynchronizedHover);
+  renderLegend(elements.utilizationLegend, utilization);
+  renderLegend(elements.memoryLegend, memory);
+  renderLegend(elements.temperatureLegend, temperature);
+}
+
+async function loadRunTelemetry() {
+  if (!selectedDialogRun) return;
+  elements.loadTelemetry.disabled = true;
+  elements.loadTelemetry.textContent = "Loading…";
+  elements.telemetryMessage.classList.remove("error");
+  elements.telemetryMessage.textContent = "Loading recorded hardware samples…";
+  try {
+    const document = await api(`/api/admin/runs/${encodeURIComponent(selectedDialogRun.id)}/telemetry`);
+    renderTelemetry(document);
+    elements.telemetryMessage.textContent = `${document.samples.length.toLocaleString()} samples · every ${document.sampleIntervalMs / 1000} seconds · shaded by pipeline stage`;
+    elements.loadTelemetry.hidden = true;
+  } catch (error) {
+    elements.telemetryMessage.textContent = error.message;
+    elements.telemetryMessage.classList.add("error");
+    elements.loadTelemetry.disabled = false;
+    elements.loadTelemetry.textContent = "Retry";
+  }
 }
 
 function logText(logs = []) {
@@ -673,6 +1017,7 @@ elements.saveNode.addEventListener("click", async () => {
 });
 elements.schedulePeriod.addEventListener("change", updateScheduleLimit);
 elements.refresh.addEventListener("click", refresh);
+elements.loadTelemetry.addEventListener("click", loadRunTelemetry);
 elements.closeDialog.addEventListener("click", () => elements.logDialog.close());
 elements.logDialog.addEventListener("click", (event) => { if (event.target === elements.logDialog) elements.logDialog.close(); });
 

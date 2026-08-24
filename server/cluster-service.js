@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { TelemetryService } = require("./telemetry-service.js");
 
 const NODE_MODELS = ["XE130c M8", "XE150c M8"];
 const NODE_CONFIGS = ["cpu_12c", "cpu_20c", "cpu_32c", "gpu_amd", "gpu_l4"];
@@ -127,7 +128,7 @@ async function requestJson(url, options = {}) {
 }
 
 class ClusterService {
-  constructor({ projectRoot, publishRoot, adminService, publicUrl, dataRoot = null }) {
+  constructor({ projectRoot, publishRoot, adminService, publicUrl, dataRoot = null, telemetryService = null }) {
     this.projectRoot = projectRoot;
     this.publishRoot = publishRoot;
     this.adminService = adminService;
@@ -136,6 +137,7 @@ class ClusterService {
     this.profilePath = path.join(this.dataRoot, "node-profile.json");
     this.registryPath = path.join(this.dataRoot, "cluster-registry.json");
     this.forecastRoot = path.join(this.dataRoot, "node-forecasts");
+    this.telemetry = telemetryService || new TelemetryService({ dataRoot: this.dataRoot });
     this.savedProfile = readJson(this.profilePath, { id: crypto.randomUUID(), role: "master", name: "Master", serverModel: "XE130c M8", config: ["cpu_12c"] });
     this.profile = null;
     this.masterToken = null;
@@ -143,8 +145,10 @@ class ClusterService {
     for (const entry of this.registry.values()) entry.lastSeen = null;
     this.registrationTimer = null;
     this.reportTimers = new Map();
+    this.pendingTelemetryUploads = new Map();
+    this.flushingTelemetry = false;
     adminService.setCallbacks({
-      onRunUpdated: (run, finished) => this.reportRun(run, finished),
+      onRunUpdated: (run, finished) => this.handleRunUpdated(run, finished),
       onScheduleRun: (trigger, options) => this.startRun(trigger, options),
       onValidateSchedule: (schedule, body) => this.validateScheduledRun(schedule, body),
       canSchedule: () => this.isConfigured(),
@@ -155,6 +159,7 @@ class ClusterService {
   close() {
     if (this.registrationTimer) clearInterval(this.registrationTimer);
     for (const timer of this.reportTimers.values()) clearTimeout(timer);
+    this.telemetry.close();
   }
 
   isMaster() { return this.profile?.role === "master"; }
@@ -169,10 +174,14 @@ class ClusterService {
     const profile = validateProfile(input, this.savedProfile.id);
     this.savedProfile = profile;
     this.profile = profile;
+    this.telemetry.setGpuConfigs(profile.config);
     writeJson(this.profilePath, profile);
     this.masterToken = null;
     if (this.registrationTimer) clearInterval(this.registrationTimer);
     if (this.isSlave()) {
+      for (const run of this.adminService.state?.runs || []) {
+        if (["complete", "failed", "canceled"].includes(run.status) && this.telemetry.has(run.id)) this.pendingTelemetryUploads.set(run.id, run);
+      }
       this.registerWithMaster();
       this.registrationTimer = setInterval(() => this.registerWithMaster(), 5_000);
       this.registrationTimer.unref();
@@ -195,6 +204,7 @@ class ClusterService {
       activeRunId: activeRun?.id || null,
       reusableBaseData: status.pipeline.reusableBaseData,
       forecastAvailable: fs.existsSync(path.join(this.publishRoot, "catalog.json")),
+      telemetry: this.telemetry.latest,
     });
   }
 
@@ -214,6 +224,7 @@ class ClusterService {
         activeRunId: activeRun?.id || null,
         reusableBaseData: entry.pipeline?.reusableBaseData || null,
         forecastAvailable: fs.existsSync(path.join(this.forecastRoot, entry.profile.id, "catalog.json")),
+        telemetry: entry.telemetry || null,
       }));
     }
     return nodes;
@@ -374,12 +385,25 @@ class ClusterService {
           profile: this.profile,
           baseUrl: this.publicUrl(),
           pipeline: { ready: status.pipeline.ready, active: status.pipeline.active, reusableBaseData: status.pipeline.reusableBaseData },
+          telemetry: this.telemetry.latest,
         }),
       });
       this.masterToken = result.token;
+      await this.flushPendingTelemetry();
     } catch (error) {
       console.warn(`Master registration failed: ${error.message}`);
     }
+  }
+
+  async handleRunUpdated(run, finished) {
+    if (run.status === "running") this.telemetry.setActiveRun(run);
+    else this.telemetry.updateRun(run);
+    if (finished) {
+      await this.telemetry.finishRun(run);
+      this.adminService.persistRunState?.();
+      if (this.isSlave() && this.telemetry.has(run.id)) this.pendingTelemetryUploads.set(run.id, run);
+    }
+    return this.reportRun(run, finished);
   }
 
   reportRun(run, finished) {
@@ -402,7 +426,40 @@ class ClusterService {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.masterToken}` },
       body: JSON.stringify({ run: { ...run, ...this.nodeMetadata(this.profile) } }),
     });
+    if (finished && this.pendingTelemetryUploads.has(run.id)) {
+      try {
+        await this.uploadTelemetry(run);
+        this.pendingTelemetryUploads.delete(run.id);
+      } catch (error) { console.warn(`Could not upload execution telemetry: ${error.message}`); }
+    }
     if (finished && run.status === "complete" && run.runDir) await this.uploadForecast(run);
+  }
+
+  async uploadTelemetry(run) {
+    const response = await fetch(`${this.profile.masterUrl}/api/cluster/telemetry/${encodeURIComponent(run.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/gzip", Authorization: `Bearer ${this.masterToken}` },
+      body: await this.telemetry.readCompressed(run.id),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`Telemetry upload failed (${response.status}).`);
+  }
+
+  async flushPendingTelemetry() {
+    if (!this.isSlave() || !this.masterToken || this.flushingTelemetry || !this.pendingTelemetryUploads.size) return;
+    this.flushingTelemetry = true;
+    try {
+      for (const [runId, run] of this.pendingTelemetryUploads) {
+        try {
+          await this.uploadTelemetry(run);
+          this.pendingTelemetryUploads.delete(runId);
+        } catch (error) {
+          console.warn(`Telemetry retry failed for ${runId}: ${error.message}`);
+        }
+      }
+    } finally {
+      this.flushingTelemetry = false;
+    }
   }
 
   async uploadForecast(run) {
@@ -474,6 +531,18 @@ class ClusterService {
       sendJson(response, 200, await this.status());
       return true;
     }
+    const telemetryRead = /^\/api\/admin\/runs\/([^/]+)\/telemetry$/.exec(pathname);
+    if (telemetryRead && request.method === "GET") {
+      try {
+        const runId = decodeURIComponent(telemetryRead[1]);
+        if (!this.telemetry.has(runId)) {
+          sendJson(response, 404, { error: "Telemetry is not available for this execution." });
+          return true;
+        }
+        sendJson(response, 200, await this.telemetry.read(runId));
+      } catch (error) { sendJson(response, 400, { error: error.message }); }
+      return true;
+    }
     if (pathname === "/api/nodes" && request.method === "GET") {
       const status = await this.adminService.status();
       sendJson(response, 200, { configured: this.isConfigured(), nodes: this.isConfigured() ? this.nodes(status) : [] });
@@ -511,7 +580,7 @@ class ClusterService {
         const profile = validateProfile({ ...body.profile, role: "slave", masterUrl: this.publicUrl() }, body.profile?.id);
         let entry = this.registry.get(profile.id);
         if (!entry && this.registry.size >= MAX_SLAVES) throw new Error("This master already has the maximum of three slave nodes.");
-        entry = { ...entry, profile, baseUrl: normalizeMasterUrl(body.baseUrl), pipeline: body.pipeline || {}, lastSeen: new Date().toISOString(), token: entry?.token || crypto.randomBytes(32).toString("base64url") };
+        entry = { ...entry, profile, baseUrl: normalizeMasterUrl(body.baseUrl), pipeline: body.pipeline || {}, telemetry: body.telemetry || null, lastSeen: new Date().toISOString(), token: entry?.token || crypto.randomBytes(32).toString("base64url") };
         this.registry.set(profile.id, entry);
         this.saveRegistry();
         sendJson(response, 200, { token: entry.token, master: publicNode(this.profile) });
@@ -561,6 +630,24 @@ class ClusterService {
           ? this.queueRun("master", { ...body.options, nodeId: this.profile.id })
           : this.startRun("master", { ...body.options, nodeId: this.profile.id })) });
       } catch (error) { sendJson(response, error.code === "RUN_ACTIVE" ? 409 : 400, { error: error.message }); }
+      return true;
+    }
+    const telemetryUpload = /^\/api\/cluster\/telemetry\/([^/]+)$/.exec(pathname);
+    if (telemetryUpload && request.method === "PUT") {
+      const runId = decodeURIComponent(telemetryUpload[1]);
+      try {
+        if (!this.isMaster()) throw new Error("Not a master node.");
+        const nodeId = [...this.registry.entries()].find(([, entry]) => this.authorized(request, entry.token))?.[0];
+        if (!nodeId) throw new Error("Unauthorized telemetry upload.");
+        const content = await collectBody(request, 4 * 1024 * 1024);
+        await this.telemetry.writeCompressed(runId, content);
+        const document = await this.telemetry.read(runId);
+        if (document.runId !== runId || (document.nodeId && document.nodeId !== nodeId)) throw new Error("Telemetry does not match this execution or node.");
+        sendJson(response, 200, { accepted: true });
+      } catch (error) {
+        try { await fs.promises.unlink(this.telemetry.filePath(runId)); } catch { /* nothing to clean up */ }
+        sendJson(response, /Unauthorized/.test(error.message) ? 401 : 400, { error: error.message });
+      }
       return true;
     }
     const upload = /^\/api\/cluster\/results\/([^/]+)\/file$/.exec(pathname);

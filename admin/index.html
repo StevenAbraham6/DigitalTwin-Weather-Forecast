@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#071210" />
   <title>Pipeline Control — Digital Twin Earth</title>
-  <link rel="stylesheet" href="/admin/admin.css?v=10" />
+  <link rel="stylesheet" href="/admin/admin.css?v=11" />
 </head>
 <body>
   <div class="aurora" aria-hidden="true"></div>
@@ -48,27 +48,15 @@
 
     <div id="admin-dashboard" hidden>
 
-    <section class="metric-grid" aria-label="Pipeline summary">
-      <article class="metric-card accent">
-        <span class="metric-label">Snapshot storage</span>
-        <strong id="snapshot-storage">—</strong>
-        <small id="snapshot-detail">Scanning published snapshots…</small>
-      </article>
-      <article class="metric-card">
-        <span class="metric-label">Node</span>
-        <strong id="current-node">—</strong>
-        <small id="current-node-detail">Waiting for configuration</small>
-      </article>
-      <article class="metric-card">
-        <span class="metric-label">Last execution</span>
-        <strong id="last-run">—</strong>
-        <small id="last-run-detail">No execution history yet</small>
-      </article>
-      <article class="metric-card">
-        <span class="metric-label">Next scheduled run</span>
-        <strong id="next-run">Off</strong>
-        <small id="next-run-detail">No recurring schedule</small>
-      </article>
+    <section class="node-overview" aria-labelledby="node-overview-title">
+      <div class="node-overview-heading">
+        <div>
+          <span class="eyebrow">Live environment</span>
+          <h2 id="node-overview-title">Connected compute</h2>
+        </div>
+        <small>Hardware statistics update from each node heartbeat</small>
+      </div>
+      <div id="node-telemetry-grid" class="node-telemetry-grid"></div>
     </section>
 
     <section class="panel execution-panel">
@@ -214,6 +202,25 @@
       <button id="close-dialog" class="quiet-button" type="button">Close</button>
     </div>
     <div id="dialog-summary" class="dialog-summary"></div>
+    <section id="dialog-telemetry" class="telemetry-details" aria-labelledby="dialog-telemetry-heading">
+      <div class="telemetry-details-heading">
+        <div>
+          <span class="eyebrow">Advanced details</span>
+          <h3 id="dialog-telemetry-heading">Execution telemetry</h3>
+        </div>
+        <button id="load-telemetry" class="secondary-button" type="button">Load graphs</button>
+      </div>
+      <p id="telemetry-message" class="telemetry-message">Hardware samples are loaded only when requested.</p>
+      <div id="telemetry-content" hidden>
+        <div id="telemetry-summary" class="telemetry-summary"></div>
+        <div id="telemetry-hover" class="telemetry-hover">Move across a graph to inspect a synchronized point in time.</div>
+        <div class="telemetry-chart-grid">
+          <figure class="telemetry-chart"><figcaption>CPU and GPU utilization</figcaption><canvas id="utilization-chart"></canvas><div id="utilization-legend" class="chart-legend"></div></figure>
+          <figure class="telemetry-chart"><figcaption>System memory and GPU VRAM</figcaption><canvas id="memory-chart"></canvas><div id="memory-legend" class="chart-legend"></div></figure>
+          <figure class="telemetry-chart"><figcaption>CPU and GPU temperature</figcaption><canvas id="temperature-chart"></canvas><div id="temperature-legend" class="chart-legend"></div></figure>
+        </div>
+      </div>
+    </section>
     <section id="dialog-inference-steps" class="inference-steps dialog-inference-steps" aria-labelledby="dialog-inference-heading">
       <div class="inference-steps-heading">
         <span id="dialog-inference-heading" class="eyebrow">Inference steps</span>
@@ -224,6 +231,6 @@
     <pre id="dialog-log" class="log-view"></pre>
   </dialog>
 
-  <script src="/admin/admin.js?v=13"></script>
+  <script src="/admin/admin.js?v=14"></script>
 </body>
 </html>
