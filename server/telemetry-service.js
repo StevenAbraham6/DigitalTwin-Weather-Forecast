@@ -256,7 +256,7 @@ class TelemetryService {
 
   async collectAmd() {
     try {
-      const { stdout } = await this.commandRunner("amd-smi", ["monitor", "-ptumv", "--json", "--iterations", "1"], { timeout: 1_500, maxBuffer: 1024 * 1024 });
+      const { stdout } = await this.commandRunner("amd-smi", ["monitor", "-ptumv", "--json"], { timeout: 1_500, maxBuffer: 1024 * 1024 });
       return parseAmdJson(stdout);
     } catch { return []; }
   }

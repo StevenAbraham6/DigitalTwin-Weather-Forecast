@@ -67,17 +67,18 @@ async function main() {
     const configuredService = new TelemetryService({
       dataRoot: root,
       autoStart: false,
-      commandRunner: async (command) => {
-        commands.push(command);
+      commandRunner: async (command, args) => {
+        commands.push({ command, args });
         return { stdout: command === "nvidia-smi" ? "GPU-1, NVIDIA L4, 50, 100, 200, 60, 40, 72\n" : "{}" };
       },
     });
     await configuredService.setGpuConfigs(["cpu_20c"]);
     assert.deepEqual(commands, [], "CPU-only nodes must not invoke GPU telemetry tools");
     await configuredService.setGpuConfigs(["cpu_20c", "gpu_l4"]);
-    assert.deepEqual(commands, ["nvidia-smi"], "NVIDIA configurations must query only NVIDIA");
+    assert.equal(commands[0].command, "nvidia-smi", "NVIDIA configurations must query only NVIDIA");
     await configuredService.setGpuConfigs(["gpu_amd"]);
-    assert.deepEqual(commands, ["nvidia-smi", "amd-smi"], "AMD configurations must query only AMD");
+    assert.equal(commands[1].command, "amd-smi", "AMD configurations must query only AMD");
+    assert.deepEqual(commands[1].args, ["monitor", "-ptumv", "--json"], "single-shot AMD queries must not use iterations without watch mode");
     configuredService.close();
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
